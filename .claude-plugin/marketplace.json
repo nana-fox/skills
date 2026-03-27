@@ -10,8 +10,9 @@
   "plugins": [
     {
       "name": "buddy-skills",
-      "description": "Cross-model verification via Claude-Codex/Gemini collaboration. Provides verification levels (V0-V3), evidence packaging, and structured dialogue protocols for breaking single-model echo chambers.",
+      "description": "Cross-model verification via Claude-Codex collaboration. Provides verification levels (V0-V3), evidence packaging, and structured dialogue protocols for breaking single-model echo chambers.",
       "source": "./",
+      "strict": false,
       "skills": [
         "./skills/codex-buddy"
       ]

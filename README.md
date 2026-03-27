@@ -30,10 +30,12 @@ Single AI models fail silently by rationalizing errors fluently. These skills br
 ```bash
 # Clone the repo
 git clone https://github.com/ddnio/skills.git
+cd skills
 
-# Copy skill to personal skills directory
+# Copy skill runtime assets to personal skills directory
 mkdir -p ~/.claude/skills/codex-buddy
 cp skills/codex-buddy/SKILL.md ~/.claude/skills/codex-buddy/
+cp -R skills/codex-buddy/references ~/.claude/skills/codex-buddy/
 ```
 
 ### Prerequisites

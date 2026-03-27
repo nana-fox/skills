@@ -1,7 +1,9 @@
 #!/bin/bash
-# 将项目 SKILL.md 同步到实际 Claude Code skill 路径（实现 reload）
-SKILL_SRC="$(cd "$(dirname "$0")/.." && pwd)/SKILL.md"
-SKILL_DST="$HOME/.claude/skills/codex-buddy/SKILL.md"
+# 将 skill 运行时资产同步到本地 Claude Code skill 路径
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SKILL_DST="$HOME/.claude/skills/codex-buddy"
 
-cp "$SKILL_SRC" "$SKILL_DST"
-echo "[sync-skill] Synced: $SKILL_SRC -> $SKILL_DST"
+mkdir -p "$SKILL_DST"
+cp "$SKILL_DIR/SKILL.md" "$SKILL_DST/"
+cp -R "$SKILL_DIR/references" "$SKILL_DST/"
+echo "[sync-skill] Synced: $SKILL_DIR -> $SKILL_DST (SKILL.md + references/)"

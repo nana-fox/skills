@@ -5,21 +5,22 @@
 # 失败时：打印所有问题后以退出码 1 退出（= 进入 triage 模式，不是终止迭代）
 # 成功时：退出码 0
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$SKILL_DIR/../.." && pwd)"
 FAIL=0
 
 fail() { echo "  ✗ $1"; FAIL=1; }
 pass() { echo "  ✓ $1"; }
 
 echo "=== verify-repo.sh ==="
-echo "repo: $REPO_DIR"
+echo "skill_dir: $SKILL_DIR"
+echo "repo_root: $REPO_ROOT"
 echo ""
 
 # ── 1. 关键文件存在性 ────────────────────────────────────────
-echo "── 关键文件 ──"
+echo "── 关键文件（skill 级）──"
 for f in \
   SKILL.md \
-  CLAUDE.md \
   CHANGELOG.md \
   CONTRIBUTING.md \
   README.md \
@@ -28,13 +29,21 @@ for f in \
   references/WORKFLOW.md \
   scripts/sync-skill.sh \
   scripts/verify-repo.sh; do
-  [ -f "$REPO_DIR/$f" ] && pass "$f" || fail "$f MISSING"
+  [ -f "$SKILL_DIR/$f" ] && pass "$f" || fail "$f MISSING"
+done
+
+echo "── 关键文件（仓库级）──"
+for f in \
+  CLAUDE.md \
+  README.md \
+  .claude-plugin/marketplace.json; do
+  [ -f "$REPO_ROOT/$f" ] && pass "(root) $f" || fail "(root) $f MISSING"
 done
 echo ""
 
 # ── 2. SKILL.md 结构チェック ─────────────────────────────────
 echo "── SKILL.md 结构 ──"
-SKILL="$REPO_DIR/SKILL.md"
+SKILL="$SKILL_DIR/SKILL.md"
 SKILL_LINES=$(wc -l < "$SKILL")
 
 if [ "$SKILL_LINES" -lt 150 ]; then
@@ -79,14 +88,14 @@ echo ""
 echo "── 失效引用 ──"
 
 # CONTRIBUTING.md: docs/automation.md 不存在
-if grep -q "docs/automation\.md" "$REPO_DIR/CONTRIBUTING.md" 2>/dev/null; then
+if grep -q "docs/automation\.md" "$SKILL_DIR/CONTRIBUTING.md" 2>/dev/null; then
   fail "CONTRIBUTING.md 引用了不存在的 docs/automation.md"
 else
   pass "CONTRIBUTING.md: 无 docs/automation.md 引用"
 fi
 
 # CLAUDE.md: evals/trigger-evals.json 不存在（正确文件是 evals/evals.json）
-if grep -q "trigger-evals\.json" "$REPO_DIR/CLAUDE.md" 2>/dev/null; then
+if grep -q "trigger-evals\.json" "$REPO_ROOT/CLAUDE.md" 2>/dev/null; then
   fail "CLAUDE.md 引用了不存在的 evals/trigger-evals.json（正确: evals/evals.json）"
 else
   pass "CLAUDE.md: 无 trigger-evals.json 引用"
@@ -94,7 +103,7 @@ fi
 
 # SKILL.md 引用 references/cli-examples.md
 if grep -q "references/cli-examples\.md" "$SKILL" 2>/dev/null; then
-  if [ -f "$REPO_DIR/references/cli-examples.md" ]; then
+  if [ -f "$SKILL_DIR/references/cli-examples.md" ]; then
     pass "SKILL.md 引用的 references/cli-examples.md 存在"
   else
     fail "SKILL.md 引用了不存在的 references/cli-examples.md"
@@ -104,7 +113,7 @@ echo ""
 
 # ── 5. 可移植性：scripts/ 不含私有绝对路径 ──────────────────
 echo "── 可移植性 ──"
-if grep -qn "/Users/" "$REPO_DIR/scripts/sync-skill.sh" 2>/dev/null; then
+if grep -qn "/Users/" "$SKILL_DIR/scripts/sync-skill.sh" 2>/dev/null; then
   fail "scripts/sync-skill.sh 含硬编码绝对路径 /Users/..."
 else
   pass "scripts/sync-skill.sh: 无硬编码绝对路径"
@@ -113,31 +122,31 @@ echo ""
 
 # ── 6. Git diff 预览（SKILL.md 和控制文件） ──────────────────
 echo "── 近期改动预览 ──"
-TRACKED_CHANGES=$(git -C "$REPO_DIR" diff --name-only -- SKILL.md CLAUDE.md STATUS.md "references/WORKFLOW.md" 2>/dev/null)
+TRACKED_CHANGES=$(git -C "$REPO_ROOT" diff --name-only -- "skills/codex-buddy/SKILL.md" "CLAUDE.md" "skills/codex-buddy/STATUS.md" "skills/codex-buddy/references/WORKFLOW.md" 2>/dev/null)
 if [ -z "$TRACKED_CHANGES" ]; then
   echo "  (SKILL.md 等核心文件无未提交改动)"
 else
   echo "  已修改: $TRACKED_CHANGES"
-  git -C "$REPO_DIR" diff --stat -- SKILL.md CLAUDE.md STATUS.md "references/WORKFLOW.md" 2>/dev/null
+  git -C "$REPO_ROOT" diff --stat -- "skills/codex-buddy/SKILL.md" "CLAUDE.md" "skills/codex-buddy/STATUS.md" "skills/codex-buddy/references/WORKFLOW.md" 2>/dev/null
 fi
 echo ""
 
 # ── 7. CHANGELOG 引用完整性 ────────────────────────────────────
 echo "── CHANGELOG 引用完整性 ──"
 while IFS= read -r f; do
-  if [ -f "$REPO_DIR/$f" ]; then
+  if [ -f "$SKILL_DIR/$f" ]; then
     pass "引用存在: $f"
   else
     fail "CHANGELOG 引用了不存在的文件: $f"
   fi
-done < <(grep -oE 'discussions/[a-z0-9_-]+\.md' "$REPO_DIR/CHANGELOG.md" | sort -u)
+done < <(grep -oE 'discussions/[a-z0-9_-]+\.md' "$SKILL_DIR/CHANGELOG.md" | sort -u)
 echo ""
 
 # ── 8. evals.json id 连续性 ───────────────────────────────────
 echo "── evals.json id 连续性 ──"
 if command -v jq &>/dev/null; then
-  MAX=$(jq '[.evals[].id] | max' "$REPO_DIR/evals/evals.json")
-  COUNT=$(jq '.evals | length' "$REPO_DIR/evals/evals.json")
+  MAX=$(jq '[.evals[].id] | max' "$SKILL_DIR/evals/evals.json")
+  COUNT=$(jq '.evals | length' "$SKILL_DIR/evals/evals.json")
   if [ "$MAX" = "$COUNT" ]; then
     pass "evals.json id 连续 (1..$COUNT)"
   else
@@ -150,7 +159,7 @@ echo ""
 
 # ── 9. STATUS 状态机一致性 ──────────────────────────────────────
 echo "── STATUS 状态机一致性 ──"
-STATUS_FILE="$REPO_DIR/STATUS.md"
+STATUS_FILE="$SKILL_DIR/STATUS.md"
 
 # 提取 selected_item 的值（跳过注释行）
 SELECTED=$(sed -n '/^## selected_item/,/^## /{ /^#/d; /^$/d; /^<!--/d; p; }' "$STATUS_FILE" | head -1 | tr -d '[:space:]')
@@ -187,9 +196,9 @@ echo ""
 # ── 10. 独立发现落地检查 ───────────────────────────────────────
 echo "── 独立发现落地检查 ──"
 # CHANGELOG 中"登记为后续改进"或"unresolved"的标记，必须有对应 work_queue 条目或已关闭
-DEFERRED_MARKERS=$(grep -oP '(?<=（|: ).*?(?=（登记为后续改进）)' "$REPO_DIR/CHANGELOG.md" 2>/dev/null || true)
-UNRESOLVED_COUNT=$(grep -c 'unresolved' "$REPO_DIR/CHANGELOG.md" 2>/dev/null || true)
-DEFERRED_COUNT=$(grep -c '登记为后续改进' "$REPO_DIR/CHANGELOG.md" 2>/dev/null || true)
+DEFERRED_MARKERS=$(grep -oP '(?<=（|: ).*?(?=（登记为后续改进）)' "$SKILL_DIR/CHANGELOG.md" 2>/dev/null || true)
+UNRESOLVED_COUNT=$(grep -c 'unresolved' "$SKILL_DIR/CHANGELOG.md" 2>/dev/null || true)
+DEFERRED_COUNT=$(grep -c '登记为后续改进' "$SKILL_DIR/CHANGELOG.md" 2>/dev/null || true)
 
 DEFERRED_TOTAL=$((DEFERRED_COUNT + UNRESOLVED_COUNT))
 if [ "$DEFERRED_TOTAL" -eq 0 ]; then
@@ -206,14 +215,14 @@ else
       DESC=$(echo "$line" | sed 's/（登记为后续改进）//' | sed 's/.*[：:]//' | tr -d '*' | xargs)
       # 在 work_queue 中搜索（宽松匹配：标题包含关键词的前几个字）
       FIRST_WORDS=$(echo "$DESC" | awk '{print $1}')
-      if grep -q "$FIRST_WORDS" "$REPO_DIR/STATUS.md" 2>/dev/null; then
+      if grep -q "$FIRST_WORDS" "$SKILL_DIR/STATUS.md" 2>/dev/null; then
         pass "独立发现已落地: $DESC"
       else
         fail "CHANGELOG 标记'登记为后续改进'但 work_queue 无对应: $DESC"
         ORPHAN=$((ORPHAN + 1))
       fi
     fi
-  done < <(grep '登记为后续改进' "$REPO_DIR/CHANGELOG.md")
+  done < <(grep '登记为后续改进' "$SKILL_DIR/CHANGELOG.md")
 
   if [ "$ORPHAN" -eq 0 ] && [ "$UNRESOLVED_COUNT" -eq 0 ]; then
     pass "所有独立发现标记均已落地"
@@ -226,8 +235,8 @@ echo ""
 
 # ── 11. done_when 主观词汇检查 ───────────────────────────────
 echo "── done_when 主观词汇检查 ──"
-if grep -q "done_when" "$REPO_DIR/STATUS.md"; then
-  if grep -A1 "done_when" "$REPO_DIR/STATUS.md" | grep -qE 'AI 判断|感觉|认为|满意|觉得'; then
+if grep -q "done_when" "$SKILL_DIR/STATUS.md"; then
+  if grep -A1 "done_when" "$SKILL_DIR/STATUS.md" | grep -qE 'AI 判断|感觉|认为|满意|觉得'; then
     fail "STATUS.md 的 done_when 包含主观词汇（AI 判断/感觉/认为/满意/觉得）"
   else
     pass "done_when 无主观词汇"
