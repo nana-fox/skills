@@ -59,6 +59,7 @@ skills/
 │   └── marketplace.json      # Plugin marketplace index
 ├── skills/
 │   ├── codex-buddy/          # Claude-Codex verification
+│   │   ├── .claude-plugin/plugin.json  # Plugin metadata (required for install)
 │   │   ├── SKILL.md          # Skill definition (runtime)
 │   │   ├── references/       # CLI examples (runtime)
 │   │   ├── scripts/          # Sync, verify-repo, verify-install scripts

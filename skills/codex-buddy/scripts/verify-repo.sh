@@ -237,20 +237,46 @@ echo ""
 echo "── marketplace.json 一致性 ──"
 MARKETPLACE="$REPO_ROOT/.claude-plugin/marketplace.json"
 if [ -f "$MARKETPLACE" ]; then
-  # 检查 source 路径是否存在
   if command -v jq &>/dev/null; then
     SOURCE=$(jq -r '.plugins[0].source' "$MARKETPLACE")
+    MARKETPLACE_NAME=$(jq -r '.plugins[0].name' "$MARKETPLACE")
+
+    # source 路径存在
     if [ -d "$REPO_ROOT/$SOURCE" ]; then
       pass "marketplace source 路径存在: $SOURCE"
     else
       fail "marketplace source 路径不存在: $SOURCE"
     fi
 
-    # 检查 SKILL.md 是否在 source 指向的目录中
+    # SKILL.md 存在
     if [ -f "$REPO_ROOT/$SOURCE/SKILL.md" ]; then
       pass "marketplace source 目录含 SKILL.md"
     else
       fail "marketplace source 目录缺少 SKILL.md"
+    fi
+
+    # plugin.json 存在
+    PLUGIN_JSON="$REPO_ROOT/$SOURCE/.claude-plugin/plugin.json"
+    if [ -f "$PLUGIN_JSON" ]; then
+      pass "plugin.json 存在: $SOURCE/.claude-plugin/plugin.json"
+
+      # plugin.json name 与 marketplace.json name 一致
+      PLUGIN_NAME=$(jq -r '.name' "$PLUGIN_JSON")
+      if [ "$PLUGIN_NAME" = "$MARKETPLACE_NAME" ]; then
+        pass "plugin.json name ($PLUGIN_NAME) 与 marketplace.json 一致"
+      else
+        fail "plugin.json name ($PLUGIN_NAME) ≠ marketplace.json name ($MARKETPLACE_NAME)"
+      fi
+    else
+      fail "缺少 plugin.json: $SOURCE/.claude-plugin/plugin.json（安装后会导致重复注册）"
+    fi
+
+    # marketplace entry 不能含 skills 字段（与 plugin.json 冲突）
+    HAS_SKILLS=$(jq -r '.plugins[0] | has("skills")' "$MARKETPLACE")
+    if [ "$HAS_SKILLS" = "true" ]; then
+      fail "marketplace entry 含 skills 字段（会与 plugin.json 冲突导致 Plugin Errors）"
+    else
+      pass "marketplace entry 无 skills 字段冲突"
     fi
   else
     pass "marketplace.json 检查跳过（jq 不可用）"
