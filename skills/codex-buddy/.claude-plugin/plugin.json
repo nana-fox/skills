@@ -1,0 +1,7 @@
+{
+  "name": "codex-buddy",
+  "description": "Cross-model verification via Claude-Codex collaboration. Provides verification levels (V0-V3), evidence packaging, and structured dialogue protocols for breaking single-model echo chambers.",
+  "author": {
+    "name": "ddnio"
+  }
+}
