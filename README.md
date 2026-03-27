@@ -22,7 +22,7 @@ Single AI models fail silently by rationalizing errors fluently. These skills br
 
 ```bash
 /plugin marketplace add ddnio/skills
-/plugin install buddy-skills@buddy-skills
+/plugin install buddy-skills@codex-buddy
 ```
 
 ### Manual Installation
