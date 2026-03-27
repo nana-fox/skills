@@ -44,5 +44,16 @@ else
   cp "$SKILL_DIR/SKILL.md" "$SKILL_DST/"
 fi
 
+# hooks 同步到 plugin cache（hooks 由插件系统加载，不在 skills 目录）
+if [ "$HOST" = "claude" ]; then
+  PLUGIN_CACHE_DIR=$(find "$HOME/.claude/plugins/cache/ddnio-skills/codex-buddy" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
+  if [ -n "$PLUGIN_CACHE_DIR" ] && [ -d "$SKILL_DIR/hooks" ]; then
+    mkdir -p "$PLUGIN_CACHE_DIR/hooks"
+    cp "$SKILL_DIR/hooks/"* "$PLUGIN_CACHE_DIR/hooks/" 2>/dev/null
+    chmod +x "$PLUGIN_CACHE_DIR/hooks/session-start" "$PLUGIN_CACHE_DIR/hooks/run-hook.cmd" 2>/dev/null
+    echo "[sync-skill] Hooks synced to plugin cache: $PLUGIN_CACHE_DIR/hooks/"
+  fi
+fi
+
 echo "[sync-skill] Synced: $SKILL_DIR -> $SKILL_DST (host: $HOST)"
 echo "  SKILL.md + references/"

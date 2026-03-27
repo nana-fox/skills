@@ -29,7 +29,10 @@ for f in \
   docs/WORKFLOW.md \
   scripts/sync-skill.sh \
   scripts/verify-repo.sh \
-  scripts/verify-install.sh; do
+  scripts/verify-install.sh \
+  hooks/hooks.json \
+  hooks/run-hook.cmd \
+  hooks/session-start; do
   [ -f "$SKILL_DIR/$f" ] && pass "$f" || fail "$f MISSING"
 done
 

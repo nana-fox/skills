@@ -1,8 +1,12 @@
 ---
 name: codex-buddy
 description: >
-  Use when starting any conversation — loads the verification policy for this session.
-  Loading this skill does not automatically trigger codex exec; it establishes when and how to use it.
+  Use when the user asks for optimization priorities, next-step recommendations,
+  updates to development guides based on official docs, evaluation of rules/skills/workflows,
+  or any judgment about whether a conclusion should be independently verified with Codex.
+  Typical prompts: "接下来应该做哪方面的优化", "先优化什么", "根据官方文档更新开发指南",
+  "这个结论需要验证吗", "要不要调 Codex", "这个 skill 的设计是否合理".
+  Loads the session verification policy, assigns a V-level, and decides whether Codex should be consulted.
 ---
 
 # codex-buddy
