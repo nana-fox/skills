@@ -1,0 +1,20 @@
+{
+  "name": "buddy-skills",
+  "owner": {
+    "name": "nanafox"
+  },
+  "metadata": {
+    "description": "Cross-model verification skills for AI collaboration",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "buddy-skills",
+      "description": "Cross-model verification via Claude-Codex/Gemini collaboration. Provides verification levels (V0-V3), evidence packaging, and structured dialogue protocols for breaking single-model echo chambers.",
+      "source": "./",
+      "skills": [
+        "./skills/codex-buddy"
+      ]
+    }
+  ]
+}

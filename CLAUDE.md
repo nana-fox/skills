@@ -1,0 +1,53 @@
+# CLAUDE.md
+
+> AI 代理入口。本仓库是 buddy-skills 插件市场。
+
+---
+
+## 仓库目标
+
+维护并分发 buddy 系列 skills —— 跨模型验证协作的 Claude Code 插件集合。
+
+**当前 skills：**
+- `codex-buddy` — Claude 与 Codex 跨模型验证
+
+---
+
+## 仓库结构
+
+```
+skills/                           ← 插件市场根目录
+├── .claude-plugin/marketplace.json
+├── skills/
+│   └── codex-buddy/              ← 各 skill 独立目录
+│       ├── SKILL.md              ← skill 主体（运行时）
+│       ├── references/           ← 参考文档（运行时）
+│       ├── scripts/              ← 工具脚本
+│       ├── discussions/          ← 讨论记录（开发资产）
+│       ├── evals/                ← 触发测试（开发资产）
+│       ├── STATUS.md             ← 该 skill 状态
+│       └── CHANGELOG.md          ← 该 skill 变更历史
+└── README.md
+```
+
+---
+
+## 治理规则
+
+### 根级（marketplace）
+- marketplace.json 的 plugins/skills 路径必须与实际目录一致
+- 新增 skill 必须同时更新 marketplace.json 和 README.md
+
+### Skill 级（各 skill 独立治理）
+- 每个 skill 目录有自己的 STATUS.md、CHANGELOG.md
+- SKILL.md 体积 < 150 行
+- description 是唯一触发入口，body 不重复触发条件
+- 修改 SKILL.md 后必须做 reload 验证
+
+---
+
+## 硬性约束
+
+- `discussions/` 里的原始输出不可裁剪或删改
+- 对话协议（Probe / Follow-up / Challenge）和升级流程不可破坏
+- 传递原则：不传 Claude 的推理过程和倾向性措辞
