@@ -4,6 +4,26 @@
 
 ---
 
+## v2.8.0 — 2026-03-28 V-level 触发机制重写（self-gating 修复）
+
+### 内容
+- SKILL.md L28-41：V-level 判定规则重写（135→141 行）
+  - 新增第一步"后果判断"：先问"用户会不会按这个走错"，再判级别
+  - V1 收窄为 fact-only：原文/代码/命令/行号/现状转述，不给建议
+  - V2 明确为四类带 TYPE 短码：V2[METHOD] / V2[META] / V2[DECISION] / V2[FACT→V2]
+  - 默认方向倒置：拿不准 → V2，不是 V1
+  - header 格式升级：`V{level}[TYPE] | 理由`，增加可审计性
+
+### 背景
+连续 3 次跨 2 个会话漏触发（case A/B/C），Claude+Codex 双 Probe 确认为 self-gating 结构性缺陷：分类轴按"文体"而非"后果"，V1 是过宽逃生口，红旗/兜底是自律协议不是外部约束。
+
+### Codex 交互
+- Probe 1（SESSION: 019d318f）：问题定性 — self-gating false-negative，分类轴错误
+- Probe 2（SESSION: 019d3193）：优化方案 — 方案 A（收窄 V1）为主，方案 B（hook 保险丝）为辅
+- 两轮结论一致，已验证
+
+---
+
 ## v2.5.6 — 2026-03-27 收尾优化 + 大方向复盘
 
 ### 内容

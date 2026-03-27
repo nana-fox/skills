@@ -1,12 +1,17 @@
 ---
 name: codex-buddy
 description: >
-  Use when the user asks for optimization priorities, next-step recommendations,
-  updates to development guides based on official docs, evaluation of rules/skills/workflows,
-  or any judgment about whether a conclusion should be independently verified with Codex.
-  Typical prompts: "接下来应该做哪方面的优化", "先优化什么", "根据官方文档更新开发指南",
-  "这个结论需要验证吗", "要不要调 Codex", "这个 skill 的设计是否合理".
-  Loads the session verification policy, assigns a V-level, and decides whether Codex should be consulted.
+  Cross-model AI buddy for independent second opinions via Codex CLI.
+  Use when Claude faces any nontrivial judgment, recommendation, critique,
+  review, prioritization, tradeoff, or decision in any domain — not limited
+  to specific scenarios. Covers: reviewing plans, docs, code, specs, rules,
+  workflows, or proposals; checking reasoning or assumptions;
+  comparing options; finding blind spots; validating conclusions.
+  Also trigger on natural requests like: "帮我看看", "你觉得呢",
+  "这样好不好", "有没有问题", "还有更好的办法吗", "我不确定这个对不对",
+  "帮我想想还有没有遗漏", "你确定吗", "再想想".
+  If borderline and the task involves judgment rather than rote execution,
+  activate.
 ---
 
 # codex-buddy
@@ -20,20 +25,27 @@ description: >
 <EXTREMELY-IMPORTANT>
 加载此 skill ≠ 执行 codex exec。加载建立会话级验证政策；执行按验证级别条件触发。
 
-每个回合，回答之前先判断（不得跳过，"只是讨论"不是豁免条件）：
-1. 当前任务的验证级别？（V0 / V1 / V2 / V3）
-2. 该级别需要调 Codex 吗？
+每个回合，回答之前先判（不得跳过）：
 
-判断结果写在回复开头，格式：`V{0-3} | {理由}`
-示例：`V0 | 机械格式化任务` 或 `V2 | 架构选型需独立第二判断`
+**第一步：按后果判，不按文体判**
+→ 我的回答错了，用户会不会按这个方向走错？会 → 最低 V2。
 
-V0 不调 | V1 可选（跳过标 `[未验证]`）| V2 提出方先验证 | V3 必须人工/外部验证
+**第二步：判验证级别**
+V1[FACT] — 仅限：原文/代码/命令/行号/现状转述，可直接核对，不给建议
+V2[METHOD] — 涉及：推荐/方法/流程/如何做/方向判断/取舍/优先级
+V2[META] — 涉及：本 skill / 验证机制 / 多代理协作的设计、规则、取舍
+V2[DECISION] — 涉及：任何影响用户决策/实现/规则走向的结论
+V0 — 机械/格式化任务 | V3 — 破坏性/不可逆操作
+
+**拿不准 → V2，不是 V1。**
+
+V0 不调 | V1 可选（跳过标 `[未验证]`）| V2 必须 Probe | V3 必须人工/外部验证
+
+写在回复开头，格式：`V{level}[TYPE] | {理由}`
+示例：`V1[FACT] | 查行号` 或 `V2[METHOD] | 方法论推荐影响项目走向`
 
 漏触发红旗——这些念头意味着你在合理化跳过：
 "这只是讨论" / "答案很清晰" / "我在解释为什么没触发" / "这是关于 skill 自身的评估"
-
-兜底触发（绕过自评盲区）：
-讨论本 skill、验证机制或 Claude-Codex/多代理协作机制的设计决策、取舍或规则修改 → 最低 V2；仅查现状/原文/行号除外。
 </EXTREMELY-IMPORTANT>
 
 ---
