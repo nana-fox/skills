@@ -28,4 +28,4 @@ iter: <简短描述>      # Claude+Codex 协作迭代（自动提交格式）
 
 ## 开发环境
 
-见 [`references/WORKFLOW.md`](./references/WORKFLOW.md) 了解本地迭代流程和开发机制。
+见 [`docs/WORKFLOW.md`](./docs/WORKFLOW.md) 了解本地迭代流程和开发机制。

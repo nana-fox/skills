@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify repo health
+        run: bash skills/codex-buddy/scripts/verify-repo.sh
+
+      - name: Validate marketplace.json
+        run: |
+          if command -v jq &>/dev/null; then
+            jq . .claude-plugin/marketplace.json > /dev/null
+            echo "marketplace.json is valid JSON"
+          fi
+
+      - name: Shellcheck scripts
+        run: |
+          if command -v shellcheck &>/dev/null; then
+            shellcheck skills/codex-buddy/scripts/*.sh
+          else
+            echo "shellcheck not available, skipping"
+          fi
+
+      - name: Install smoke test
+        run: |
+          # Simulate install to temp HOME
+          export HOME="$(mktemp -d)"
+          bash skills/codex-buddy/scripts/sync-skill.sh
+          bash skills/codex-buddy/scripts/verify-install.sh

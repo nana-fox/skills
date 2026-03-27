@@ -21,8 +21,9 @@ skills/                           ← 插件市场根目录
 ├── skills/
 │   └── codex-buddy/              ← 各 skill 独立目录
 │       ├── SKILL.md              ← skill 主体（运行时）
-│       ├── references/           ← 参考文档（运行时）
-│       ├── scripts/              ← 工具脚本
+│       ├── references/           ← CLI 示例等参考文档（运行时）
+│       ├── docs/                 ← 开发文档（WORKFLOW.md 等，开发资产）
+│       ├── scripts/              ← 同步/校验脚本（verify-repo + verify-install）
 │       ├── discussions/          ← 讨论记录（开发资产）
 │       ├── evals/                ← 触发测试（开发资产）
 │       ├── STATUS.md             ← 该 skill 状态

@@ -32,10 +32,15 @@ Single AI models fail silently by rationalizing errors fluently. These skills br
 git clone https://github.com/ddnio/skills.git
 cd skills
 
-# Copy skill runtime assets to personal skills directory
-mkdir -p ~/.claude/skills/codex-buddy
-cp skills/codex-buddy/SKILL.md ~/.claude/skills/codex-buddy/
-cp -R skills/codex-buddy/references ~/.claude/skills/codex-buddy/
+# Option 1: Symlink (auto-updates on git pull)
+mkdir -p ~/.claude/skills
+ln -s "$(pwd)/skills/codex-buddy" ~/.claude/skills/codex-buddy
+
+# Option 2: Copy (re-run after updates)
+bash skills/codex-buddy/scripts/sync-skill.sh
+
+# Verify installation
+bash skills/codex-buddy/scripts/verify-install.sh
 ```
 
 ### Prerequisites
@@ -55,8 +60,9 @@ skills/
 ├── skills/
 │   ├── codex-buddy/          # Claude-Codex verification
 │   │   ├── SKILL.md          # Skill definition (runtime)
-│   │   ├── references/       # CLI examples, workflow docs (runtime)
-│   │   ├── scripts/          # Sync and verify scripts
+│   │   ├── references/       # CLI examples (runtime)
+│   │   ├── scripts/          # Sync, verify-repo, verify-install scripts
+│   │   ├── docs/             # Development workflow docs (dev only)
 │   │   ├── discussions/      # Cross-model dialogue records (dev only)
 │   │   └── evals/            # Trigger evaluation tests (dev only)
 │   └── ...                   # Future: gemini-buddy, etc.
@@ -64,8 +70,8 @@ skills/
 ```
 
 **Runtime vs Development assets:**
-- Runtime: `SKILL.md`, `references/`, `scripts/` -- distributed to users
-- Development: `discussions/`, `evals/`, `STATUS.md`, `CHANGELOG.md` -- repo only
+- Runtime: `SKILL.md`, `references/` -- loaded by AI agents
+- Development: `docs/`, `scripts/`, `discussions/`, `evals/`, `STATUS.md`, `CHANGELOG.md` -- repo only
 
 ---
 

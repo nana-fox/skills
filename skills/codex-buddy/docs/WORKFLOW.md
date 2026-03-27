@@ -1,4 +1,4 @@
-# references/WORKFLOW.md
+# docs/WORKFLOW.md
 
 完整迭代手册。被 `CLAUDE.md` 引用，按需读取。
 
@@ -44,11 +44,10 @@ codex-buddy/
 - [ ] **Reload 验证（必须执行，每次不得跳过）**：
 
   ```bash
-  diff "$(pwd)/SKILL.md" ~/.claude/skills/codex-buddy/SKILL.md && echo "✓ in sync" || echo "✗ DRIFT"
-  head -9 ~/.claude/skills/codex-buddy/SKILL.md
+  bash scripts/verify-install.sh
   ```
 
-  验证通过条件：`diff` 无输出（完全一致）+ `head` 输出的 description 与本次改动一致。
+  验证通过条件：verify-install.sh 全部 PASSED。
 
 ### 使用 skill-creator 优化 description
 
@@ -260,8 +259,7 @@ cat "$OUTPUT_FILE"
 bash scripts/sync-skill.sh
 
 # 3. Reload 验证（必须，不得跳过）
-diff "$(pwd)/SKILL.md" ~/.claude/skills/codex-buddy/SKILL.md && echo "✓ in sync" || echo "✗ DRIFT"
-head -9 ~/.claude/skills/codex-buddy/SKILL.md  # 确认 description 是预期版本
+bash scripts/verify-install.sh
 
 # 4. 写讨论记录（见下方格式规范）
 # 文件名：discussions/YYYY-MM-DD-<topic-slug>.md

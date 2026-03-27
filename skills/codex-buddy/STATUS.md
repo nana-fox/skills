@@ -114,7 +114,7 @@ NONE
   source: v2.0 重构后遗留的文档不一致
   impact: medium
   reversibility: safe
-  done_when: "grep -c 'Mode A\\|Mode B\\|Mode C' references/WORKFLOW.md CONTRIBUTING.md 输出 0"
+  done_when: "grep -c 'Mode A\\|Mode B\\|Mode C' docs/WORKFLOW.md CONTRIBUTING.md 输出 0"
   status: done
 
 - id: W-011

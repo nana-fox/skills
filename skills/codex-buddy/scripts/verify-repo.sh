@@ -26,9 +26,10 @@ for f in \
   README.md \
   STATUS.md \
   references/cli-examples.md \
-  references/WORKFLOW.md \
+  docs/WORKFLOW.md \
   scripts/sync-skill.sh \
-  scripts/verify-repo.sh; do
+  scripts/verify-repo.sh \
+  scripts/verify-install.sh; do
   [ -f "$SKILL_DIR/$f" ] && pass "$f" || fail "$f MISSING"
 done
 
@@ -70,21 +71,7 @@ for section in "Probe" "Follow-up" "Challenge" "证据打包" "停止规则"; do
 done
 echo ""
 
-# ── 3. 已安装 skill 漂移检查 ─────────────────────────────────
-echo "── Skill 安装漂移 ──"
-INSTALLED="$HOME/.claude/skills/codex-buddy/SKILL.md"
-if [ -f "$INSTALLED" ]; then
-  if diff -q "$SKILL" "$INSTALLED" > /dev/null 2>&1; then
-    pass "已安装 skill 与仓库 SKILL.md 一致"
-  else
-    fail "已安装 skill 与仓库 SKILL.md 不一致 → 运行: bash scripts/sync-skill.sh"
-  fi
-else
-  fail "未找到已安装 skill: $INSTALLED"
-fi
-echo ""
-
-# ── 4. 已知失效引用检查 ──────────────────────────────────────
+# ── 3. 已知失效引用检查 ──────────────────────────────────────
 echo "── 失效引用 ──"
 
 # CONTRIBUTING.md: docs/automation.md 不存在
@@ -111,7 +98,7 @@ if grep -q "references/cli-examples\.md" "$SKILL" 2>/dev/null; then
 fi
 echo ""
 
-# ── 5. 可移植性：scripts/ 不含私有绝对路径 ──────────────────
+# ── 4. 可移植性：scripts/ 不含私有绝对路径 ──────────────────
 echo "── 可移植性 ──"
 if grep -qn "/Users/" "$SKILL_DIR/scripts/sync-skill.sh" 2>/dev/null; then
   fail "scripts/sync-skill.sh 含硬编码绝对路径 /Users/..."
@@ -120,18 +107,18 @@ else
 fi
 echo ""
 
-# ── 6. Git diff 预览（SKILL.md 和控制文件） ──────────────────
+# ── 5. Git diff 预览（SKILL.md 和控制文件） ──────────────────
 echo "── 近期改动预览 ──"
-TRACKED_CHANGES=$(git -C "$REPO_ROOT" diff --name-only -- "skills/codex-buddy/SKILL.md" "CLAUDE.md" "skills/codex-buddy/STATUS.md" "skills/codex-buddy/references/WORKFLOW.md" 2>/dev/null)
+TRACKED_CHANGES=$(git -C "$REPO_ROOT" diff --name-only -- "skills/codex-buddy/SKILL.md" "CLAUDE.md" "skills/codex-buddy/STATUS.md" "skills/codex-buddy/docs/WORKFLOW.md" 2>/dev/null)
 if [ -z "$TRACKED_CHANGES" ]; then
   echo "  (SKILL.md 等核心文件无未提交改动)"
 else
   echo "  已修改: $TRACKED_CHANGES"
-  git -C "$REPO_ROOT" diff --stat -- "skills/codex-buddy/SKILL.md" "CLAUDE.md" "skills/codex-buddy/STATUS.md" "skills/codex-buddy/references/WORKFLOW.md" 2>/dev/null
+  git -C "$REPO_ROOT" diff --stat -- "skills/codex-buddy/SKILL.md" "CLAUDE.md" "skills/codex-buddy/STATUS.md" "skills/codex-buddy/docs/WORKFLOW.md" 2>/dev/null
 fi
 echo ""
 
-# ── 7. CHANGELOG 引用完整性 ────────────────────────────────────
+# ── 6. CHANGELOG 引用完整性 ────────────────────────────────────
 echo "── CHANGELOG 引用完整性 ──"
 while IFS= read -r f; do
   if [ -f "$SKILL_DIR/$f" ]; then
@@ -142,7 +129,7 @@ while IFS= read -r f; do
 done < <(grep -oE 'discussions/[a-z0-9_-]+\.md' "$SKILL_DIR/CHANGELOG.md" | sort -u)
 echo ""
 
-# ── 8. evals.json id 连续性 ───────────────────────────────────
+# ── 7. evals.json id 连续性 ───────────────────────────────────
 echo "── evals.json id 连续性 ──"
 if command -v jq &>/dev/null; then
   MAX=$(jq '[.evals[].id] | max' "$SKILL_DIR/evals/evals.json")
@@ -157,7 +144,7 @@ else
 fi
 echo ""
 
-# ── 9. STATUS 状态机一致性 ──────────────────────────────────────
+# ── 8. STATUS 状态机一致性 ──────────────────────────────────────
 echo "── STATUS 状态机一致性 ──"
 STATUS_FILE="$SKILL_DIR/STATUS.md"
 
@@ -193,7 +180,7 @@ else
 fi
 echo ""
 
-# ── 10. 独立发现落地检查 ───────────────────────────────────────
+# ── 9. 独立发现落地检查 ───────────────────────────────────────
 echo "── 独立发现落地检查 ──"
 # CHANGELOG 中"登记为后续改进"或"unresolved"的标记，必须有对应 work_queue 条目或已关闭
 DEFERRED_MARKERS=$(grep -oP '(?<=（|: ).*?(?=（登记为后续改进）)' "$SKILL_DIR/CHANGELOG.md" 2>/dev/null || true)
@@ -233,7 +220,7 @@ else
 fi
 echo ""
 
-# ── 11. done_when 主观词汇检查 ───────────────────────────────
+# ── 10. done_when 主观词汇检查 ───────────────────────────────
 echo "── done_when 主观词汇检查 ──"
 if grep -q "done_when" "$SKILL_DIR/STATUS.md"; then
   if grep -A1 "done_when" "$SKILL_DIR/STATUS.md" | grep -qE 'AI 判断|感觉|认为|满意|觉得'; then
@@ -243,6 +230,31 @@ if grep -q "done_when" "$SKILL_DIR/STATUS.md"; then
   fi
 else
   pass "done_when 检查跳过（STATUS.md 中无 done_when 字段）"
+fi
+echo ""
+
+# ── 11. marketplace.json 一致性 ──────────────────────────────
+echo "── marketplace.json 一致性 ──"
+MARKETPLACE="$REPO_ROOT/.claude-plugin/marketplace.json"
+if [ -f "$MARKETPLACE" ]; then
+  # 检查 source 路径是否存在
+  if command -v jq &>/dev/null; then
+    SOURCE=$(jq -r '.plugins[0].source' "$MARKETPLACE")
+    if [ -d "$REPO_ROOT/$SOURCE" ]; then
+      pass "marketplace source 路径存在: $SOURCE"
+    else
+      fail "marketplace source 路径不存在: $SOURCE"
+    fi
+
+    # 检查 SKILL.md 是否在 source 指向的目录中
+    if [ -f "$REPO_ROOT/$SOURCE/SKILL.md" ]; then
+      pass "marketplace source 目录含 SKILL.md"
+    else
+      fail "marketplace source 目录缺少 SKILL.md"
+    fi
+  else
+    pass "marketplace.json 检查跳过（jq 不可用）"
+  fi
 fi
 echo ""
 
