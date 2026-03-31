@@ -4,6 +4,33 @@
 
 ---
 
+## v3.0.0 — 2026-03-31 Verification Runtime
+
+### Content
+- **Architecture: Soft-first with Advisory Hooks** — SKILL.md is "brain" (V-level + floor rules + dialogue), Node.js scripts are "muscle" (commands + logs + budget + envelopes)
+- **SKILL.md rewrite** (136 lines): added 3 floor rules (destructive/approval/correctness-claim), buddy-runtime.mjs call pattern, Evidence Router priority (local first → Codex if needed); removed hand-crafted codex exec templates and "最小合法命令" rules
+- **New: scripts/buddy-runtime.mjs** — entry point with 4 actions: preflight, local, probe, followup
+- **New: scripts/lib/codex-adapter.mjs** — fixed codex exec command templates, session management
+- **New: scripts/lib/local-evidence.mjs** — grep/test/lint/diff/file-exists checks
+- **New: scripts/lib/gate.mjs** — 3 floor rules engine (pattern matching)
+- **New: scripts/lib/envelope.mjs** — decision envelope generator
+- **New: scripts/lib/audit.mjs** — JSONL audit log + per-session budget tracking (4 Codex calls max)
+- **New: schemas/envelope.schema.json** — decision envelope JSON schema
+- **Updated: hooks/session-start** — preflight check + ~/.buddy init
+- **Updated: references/cli-examples.md** — runtime context note
+
+### Background
+Four-round Claude-Codex brainstorm (2026-03-31) established that buddy's differentiation is intelligence (when to verify, how to avoid anchoring), not tooling. Decision to self-build everything, not fork official openai/codex-plugin-cc. codex exec wrapper chosen over app-server protocol for low-frequency verification use case.
+
+### Codex Interaction
+- Brainstorm: 4 rounds of strategic direction exploration
+- Architecture review: Codex identified 6 blocking issues in initial spec, all resolved
+- Final verification: Codex approved spec with "可以开始实现"
+- Full discussion: discussions/2026-03-31-v3-direction-brainstorm.md
+- Spec: docs/superpowers/specs/2026-03-31-buddy-v3-verification-runtime-design.md
+
+---
+
 ## v2.8.0 — 2026-03-28 V-level 触发机制重写（self-gating 修复）
 
 ### 内容

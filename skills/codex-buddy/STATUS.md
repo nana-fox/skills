@@ -6,7 +6,7 @@
 ---
 
 ## skill_version
-v2.6.0
+v3.0.0
 
 ## health_status
 <!-- HEALTHY | NEEDS_TRIAGE | BLOCKED -->
@@ -22,47 +22,36 @@ NONE
 
 ## work_queue
 <!-- 统一待办队列。done_when 必须是可由命令/文件验证的条件，不能是主观判断 -->
-<!-- 已完成项（W-003 ~ W-012）已归档，见 CHANGELOG.md 对应版本记录 -->
 
-- id: W-001
+- id: W-014
   type: validate
-  title: 确认自主执行规则在真实对话中生效
-  source: validation_queue V-001
+  title: v3 runtime end-to-end validation
+  source: v3.0.0 release
   impact: high
   reversibility: safe
-  done_when: "提供至少 2 段真实对话 transcript：1 段两边一致+可逆时直接执行，1 段命中边界条件时停止并写明 gate 原因"
+  done_when: "buddy-runtime.mjs --action preflight returns ok; --action local with file-exists check returns verified; all unit tests pass"
   status: open
 
-- id: W-002
-  type: validate
-  title: 确认 failure-first 启动顺序在真实对话中有效
-  source: validation_queue V-002
+- id: W-015
+  type: improve
+  title: PreToolUse advisory hook for destructive operations
+  source: spec §8.2
   impact: medium
   reversibility: safe
-  done_when: "eval 用例可回放且通过；或 human_gate: REQUIRED:missing_input 若无法自动化"
-  status: open
-
-- id: W-013
-  type: improve
-  title: marketplace 发布端到端验证
-  source: 连续 3 个发布 bug（命令写反、缺 plugin.json、manifest 冲突）
-  impact: high
-  reversibility: safe
-  done_when: "verify-repo.sh 检查 plugin.json 存在 + 与 marketplace.json name 一致；在无缓存环境执行 /plugin marketplace add ddnio/skills && /plugin install codex-buddy@ddnio-skills 后只注册一个 /codex-buddy"
+  done_when: "hooks.json includes PreToolUse matcher; hook intercepts rm -rf and injects advisory reminder"
   status: open
 
 ## selected_item
 <!-- 由 AI 从 work_queue 推导；不再人工填写 -->
-<!-- 格式: W-xxx；无待办写 NONE -->
-W-013
+W-014
 
 ## selection_rationale
 <!-- Claude + Codex 综合选题的理由（一句话） -->
-W-013 可自动推进且阻断发布质量；W-001/W-002 继续阻断于 human input
+v3.0 just shipped — runtime validation is the immediate priority
 
 ## operating_mode
 <!-- TRIAGE | ITERATE | VALIDATE | BLOCKED -->
-ITERATE
+VALIDATE
 
 ## human_gate
 <!-- NONE | REQUIRED:<reason> -->
@@ -73,4 +62,4 @@ NONE
 FIXED
 
 ## last_round_notes
-v2.6.0: 删除 repo_commit 字段、精简 work_queue、新增 W-013 发布验证。verify-repo.sh 增加 plugin.json 校验。CLAUDE.md/README 同步 plugin.json 结构。Codex Probe 确认方案并补充遗漏（脚本门禁、STATUS 重算、README 同步）。
+v3.0.0: Full verification runtime implementation. SKILL.md rewritten with floor rules + runtime calls (136 lines). 6 new Node.js modules (buddy-runtime, codex-adapter, local-evidence, gate, envelope, audit). SessionStart hook enhanced with preflight. Envelope JSON schema added.

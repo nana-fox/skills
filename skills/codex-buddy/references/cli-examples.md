@@ -2,6 +2,8 @@
 
 > **文档来源：** https://developers.openai.com/codex/cli — Codex CLI 会持续升级，参数和行为以官方文档为准。
 
+> **v3 Note:** 在 v3 中，`buddy-runtime.mjs` 自动生成和执行这些命令。Claude 应通过 `--action probe|local|followup|preflight` 调用 runtime，而非手搓命令。以下示例记录 runtime 内部行为，供理解和调试参考。
+
 ## 常用参数速查
 
 ### 全局参数（所有命令通用）
