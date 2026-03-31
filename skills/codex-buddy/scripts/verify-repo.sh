@@ -287,6 +287,31 @@ if [ -f "$MARKETPLACE" ]; then
 fi
 echo ""
 
+# ── 12. v3 Runtime 文件存在性 ─────────────────────────────────
+echo "── v3 Runtime 文件 ──"
+V3_FILES=(
+  "scripts/buddy-runtime.mjs"
+  "scripts/lib/codex-adapter.mjs"
+  "scripts/lib/local-evidence.mjs"
+  "scripts/lib/gate.mjs"
+  "scripts/lib/envelope.mjs"
+  "scripts/lib/audit.mjs"
+  "schemas/envelope.schema.json"
+)
+for f in "${V3_FILES[@]}"; do
+  [ -f "$SKILL_DIR/$f" ] && pass "$f" || fail "$f MISSING"
+done
+
+# envelope schema 是合法 JSON
+if [ -f "$SKILL_DIR/schemas/envelope.schema.json" ]; then
+  if command -v node &>/dev/null && node -e "JSON.parse(require('fs').readFileSync('$SKILL_DIR/schemas/envelope.schema.json','utf8'))" 2>/dev/null; then
+    pass "envelope.schema.json is valid JSON"
+  else
+    fail "envelope.schema.json is not valid JSON"
+  fi
+fi
+echo ""
+
 # ── 最终结果 ─────────────────────────────────────────────────
 if [ "$FAIL" -eq 0 ]; then
   echo "✅ PASSED — 仓库健康，可以继续迭代"
