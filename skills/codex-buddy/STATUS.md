@@ -6,7 +6,7 @@
 ---
 
 ## skill_version
-v3.0.0
+v3.0.1
 
 ## health_status
 <!-- HEALTHY | NEEDS_TRIAGE | BLOCKED -->
@@ -30,7 +30,7 @@ NONE
   impact: high
   reversibility: safe
   done_when: "buddy-runtime.mjs --action preflight returns ok; --action local with file-exists check returns verified; all unit tests pass"
-  status: open
+  status: done
 
 - id: W-015
   type: improve
@@ -59,7 +59,7 @@ NONE
 
 ## last_round_outcome
 <!-- FIXED | VALIDATED | NO_OP | REGRESSED | UNCERTAIN -->
-FIXED
+VALIDATED
 
 ## last_round_notes
-v3.0.0: Full verification runtime implementation. SKILL.md rewritten with floor rules + runtime calls (136 lines). 6 new Node.js modules (buddy-runtime, codex-adapter, local-evidence, gate, envelope, audit). SessionStart hook enhanced with preflight. Envelope JSON schema added.
+v3.0.1: W-014 e2e validation passed (5/5). Fixed 3 bugs found during validation: execFileSync→async spawn+5min watchdog (ETIMEDOUT fix), SKILL.md CLAUDE_PLUGIN_ROOT→SKILL_DIR placeholder, parseArgs empty checks handling. Codex review confirmed watchdog necessity.

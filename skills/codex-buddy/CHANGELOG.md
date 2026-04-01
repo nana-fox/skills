@@ -4,6 +4,21 @@
 
 ---
 
+## v3.0.1 — 2026-04-01 E2E Validation + Bug Fixes
+
+### Content
+- **Fix: async spawn + watchdog** — replaced `execFileSync` (120s hard timeout → ETIMEDOUT) with async `spawn` + 5-minute watchdog timer. Prevents both false timeouts and indefinite hangs.
+- **Fix: SKILL.md path placeholder** — changed `${CLAUDE_PLUGIN_ROOT}` to `<SKILL_DIR>` in code templates, since `CLAUDE_PLUGIN_ROOT` is only available in hook context, not conversation context.
+- **Fix: parseArgs empty checks** — `--checks ''` no longer parsed as value `'true'`; empty/missing checks correctly trigger S4 skip path.
+- **Validated: W-014** — full e2e validation passed (SessionStart hook, local evidence, Codex probe, budget lifecycle, floor rules 28/28).
+
+### Codex Interaction
+- Probe: Codex identified gate.mjs Chinese coverage gap (correctness patterns too narrow)
+- Review: Codex caught missing watchdog regression — "removing timeout is not a fix, use a larger watchdog"
+- Codex changed Claude's approach: async spawn alone insufficient, watchdog timer added per Codex recommendation
+
+---
+
 ## v3.0.0 — 2026-03-31 Verification Runtime
 
 ### Content
