@@ -28,7 +28,7 @@ import {
 } from './lib/codex-adapter.mjs';
 import { collectEvidence } from './lib/local-evidence.mjs';
 import { createEnvelope } from './lib/envelope.mjs';
-import { appendLog, getBudgetRemaining, BUDGET_LIMIT } from './lib/audit.mjs';
+import { appendLog, getCallCount } from './lib/audit.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -36,9 +36,9 @@ import crypto from 'node:crypto';
 const LOG_FILE = path.join(process.env.HOME || '/tmp', '.buddy', 'logs.jsonl');
 
 /**
- * Get or create a persistent buddy session ID for budget tracking.
+ * Get or create a persistent buddy session ID for audit tracking.
  * Unlike Codex session IDs (per-probe), this persists across all calls
- * in one Claude session, ensuring the 4-call budget is enforced.
+ * in one Claude session for observability.
  */
 function getOrCreateBuddySessionId(argsSessionId) {
   if (argsSessionId) return argsSessionId;
@@ -74,7 +74,7 @@ async function actionPreflight(_args) {
   output({
     status: codexAvailable ? 'ok' : 'error',
     codex_available: codexAvailable,
-    budget_remaining: buddySessionId ? getBudgetRemaining(LOG_FILE, buddySessionId) : BUDGET_LIMIT,
+    call_count: buddySessionId ? getCallCount(LOG_FILE, buddySessionId) : 0,
     message: codexAvailable ? 'Codex CLI ready' : 'Codex CLI not found. Install: npm i -g @openai/codex',
   });
 }
@@ -121,20 +121,13 @@ async function actionLocal(args) {
     unverified: envelope.unverified,
     session_id: buddySessionId,
     call_count: 0,
-    budget_remaining: getBudgetRemaining(LOG_FILE, buddySessionId),
+    call_count: getCallCount(LOG_FILE, buddySessionId),
   });
 }
 
 async function actionProbe(args) {
   const startTime = Date.now();
   const buddySessionId = getOrCreateBuddySessionId(args['session-id']);
-  const budget = getBudgetRemaining(LOG_FILE, buddySessionId);
-
-  if (budget <= 0) {
-    output({ status: 'blocked', rule: 'budget-exceeded', budget_remaining: 0 });
-    return;
-  }
-
   if (!checkCodexAvailable()) {
     output({ status: 'error', rule: 'codex-unavailable', message: 'Codex CLI not found' });
     return;
@@ -156,7 +149,6 @@ async function actionProbe(args) {
   });
 
   try {
-    // C1 fix: use execCodex (async spawn) instead of execSync with string
     const execOutput = await execCodex(cmdSpec);
     const codexSessionId = parseSessionId(execOutput);
     if (codexSessionId) saveSession(codexSessionId);
@@ -168,9 +160,7 @@ async function actionProbe(args) {
       level: args.level || 'V2',
       rule: args.rule || 'vlevel:V2',
       route: 'codex',
-      // S1: increase truncation to 1000 chars
       evidence: [`codex: ${codexResult.slice(0, 1000)}`],
-      // I1 fix: don't hardcode 'proceed' — let SKILL.md judge
       conclusion: 'needs-review',
     });
 
@@ -187,8 +177,7 @@ async function actionProbe(args) {
       unverified: envelope.unverified,
       session_id: buddySessionId,
       codex_session_id: codexSessionId,
-      call_count: BUDGET_LIMIT - getBudgetRemaining(LOG_FILE, buddySessionId),
-      budget_remaining: getBudgetRemaining(LOG_FILE, buddySessionId),
+      call_count: getCallCount(LOG_FILE, buddySessionId),
     });
   } catch (e) {
     output({ status: 'error', message: e.message.split('\n')[0], codex_output_file: outputFile });
@@ -202,12 +191,6 @@ async function actionFollowup(args) {
 
   if (!codexSessionId) {
     output({ status: 'error', message: 'No Codex session ID available for follow-up. Run probe first.' });
-    return;
-  }
-
-  const budget = getBudgetRemaining(LOG_FILE, buddySessionId);
-  if (budget <= 0) {
-    output({ status: 'blocked', rule: 'budget-exceeded', budget_remaining: 0 });
     return;
   }
 
@@ -259,8 +242,7 @@ async function actionFollowup(args) {
       unverified: envelope.unverified,
       session_id: buddySessionId,
       codex_session_id: codexSessionId,
-      call_count: BUDGET_LIMIT - getBudgetRemaining(LOG_FILE, buddySessionId),
-      budget_remaining: getBudgetRemaining(LOG_FILE, buddySessionId),
+      call_count: getCallCount(LOG_FILE, buddySessionId),
     });
   } catch (e) {
     output({ status: 'error', message: e.message.split('\n')[0], codex_output_file: outputFile });

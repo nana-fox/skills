@@ -77,8 +77,9 @@ node "<SKILL_DIR>/scripts/buddy-runtime.mjs" \
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight
 ```
 
-Runtime 返回 JSON：`status` / `evidence_summary` / `conclusion` / `budget_remaining`。
-每 session 最多 4 次 Codex 调用。超限返回 `{"status":"blocked","rule":"budget-exceeded"}`。
+Runtime 返回 JSON：`status` / `evidence_summary` / `conclusion` / `call_count`。
+同一决策最多 2 次 Codex 调用（probe + follow-up），避免无意义反复。
+**注意：** probe 调用可能耗时 30-80 秒。使用 `run_in_background` 避免 Bash 超时。
 
 ---
 

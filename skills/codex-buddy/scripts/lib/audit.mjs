@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const BUDGET_LIMIT = 4;
+// No hard budget limit. Audit tracks call count for observability only.
+// Soft guidance in SKILL.md: max 2 Codex calls per decision (probe + follow-up).
 
 export function appendLog(logFile, envelope, sessionId, workspace, latencyMs) {
   const dir = path.dirname(logFile);
@@ -35,6 +36,6 @@ export function getCallCount(logFile, sessionId) {
   }, 0);
 }
 
-export function getBudgetRemaining(logFile, sessionId) {
-  return BUDGET_LIMIT - getCallCount(logFile, sessionId);
+export function getCallCount_session(logFile, sessionId) {
+  return getCallCount(logFile, sessionId);
 }
