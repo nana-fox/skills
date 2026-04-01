@@ -69,7 +69,15 @@ export function execCodex({ bin, args }, options = {}) {
       if (code === 0) {
         resolve(stdout);
       } else {
-        const err = new Error(`codex exited with code ${code}: ${stderr.split('\n')[0]}`);
+        // Extract meaningful error from stderr (skip version banner, take last non-empty lines)
+        const stderrLines = stderr.split('\n').filter(l => l.trim());
+        const errorLines = stderrLines.filter(l =>
+          /^(ERROR|error|Warning|fatal|FATAL|mcp.*failed)/i.test(l.trim())
+        );
+        const errorMsg = errorLines.length > 0
+          ? errorLines.join(' | ')
+          : stderrLines.slice(-3).join(' | ');
+        const err = new Error(`codex exited with code ${code}: ${errorMsg}`);
         err.stdout = stdout;
         err.stderr = stderr;
         reject(err);
