@@ -59,19 +59,22 @@ Gate 触发后，按优先级选证据路径：
 1. **先 local evidence**（grep/test/lint/diff）— 快、免费、确定性高
 2. **不够再 Codex probe** — 需要独立判断时升级
 
-通过 buddy-runtime.mjs 调度，不手搓命令：
+通过 buddy-runtime.mjs 调度，不手搓命令。
+**路径规则：** `CLAUDE_PLUGIN_ROOT` 仅在 hook 上下文可用。对话中调用时，使用 skill 加载时提供的 base directory 路径（见 `Base directory for this skill:` 行）。
 
 ```bash
+# 示例（将 <SKILL_DIR> 替换为实际 base directory 路径）：
+
 # Local evidence
-node "${CLAUDE_PLUGIN_ROOT}/scripts/buddy-runtime.mjs" \
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" \
   --action local --project-dir "$PWD" --checks "test:npm test,lint:npx eslint ."
 
 # Codex probe（写证据到文件，runtime 读取并调用）
-node "${CLAUDE_PLUGIN_ROOT}/scripts/buddy-runtime.mjs" \
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" \
   --action probe --evidence /tmp/buddy-evidence.txt --project-dir "$PWD"
 
 # Preflight（检查 codex CLI 可用性）
-node "${CLAUDE_PLUGIN_ROOT}/scripts/buddy-runtime.mjs" --action preflight
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight
 ```
 
 Runtime 返回 JSON：`status` / `evidence_summary` / `conclusion` / `budget_remaining`。

@@ -54,9 +54,11 @@ function parseArgs(argv) {
   for (let i = 2; i < argv.length; i++) {
     if (argv[i].startsWith('--')) {
       const key = argv[i].slice(2);
-      const val = argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : 'true';
+      const next = argv[i + 1];
+      const hasValue = next !== undefined && next !== '' && !next.startsWith('--');
+      const val = hasValue ? next : 'true';
       args[key] = val;
-      if (val !== 'true') i++;
+      if (hasValue) i++;
     }
   }
   return args;
@@ -79,7 +81,8 @@ async function actionPreflight(_args) {
 
 async function actionLocal(args) {
   const startTime = Date.now();
-  const checks = (args.checks || '').split(',').filter(Boolean);
+  const rawChecks = args.checks === 'true' || !args.checks ? '' : args.checks;
+  const checks = rawChecks.split(',').filter(Boolean);
   const result = await collectEvidence(args['project-dir'], { checks });
 
   // S4: empty checks = skipped, not verified
@@ -153,8 +156,8 @@ async function actionProbe(args) {
   });
 
   try {
-    // C1 fix: use execCodex (execFileSync) instead of execSync with string
-    const execOutput = execCodex(cmdSpec, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // C1 fix: use execCodex (async spawn) instead of execSync with string
+    const execOutput = await execCodex(cmdSpec);
     const codexSessionId = parseSessionId(execOutput);
     if (codexSessionId) saveSession(codexSessionId);
 
@@ -230,7 +233,7 @@ async function actionFollowup(args) {
   });
 
   try {
-    execCodex(cmdSpec, { stdio: ['pipe', 'pipe', 'pipe'] });
+    await execCodex(cmdSpec);
 
     const codexResult = fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : '';
 

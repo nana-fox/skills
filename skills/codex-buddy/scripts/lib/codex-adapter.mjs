@@ -1,9 +1,9 @@
-import { execFileSync, execSync } from 'node:child_process';
+import { execSync, spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 
 /**
  * Build args array for `codex exec` probe.
- * Returns { bin, args } for use with execFileSync (no shell interpretation).
+ * Returns { bin, args } for use with spawn (no shell interpretation).
  */
 export function buildProbeArgs({ projectDir, outputFile, prompt, json = false, outputSchema = null, sandbox = 'read-only' }) {
   const args = [
@@ -25,7 +25,7 @@ export function buildProbeArgs({ projectDir, outputFile, prompt, json = false, o
 
 /**
  * Build args array for `codex exec resume` (follow-up/challenge).
- * Returns { bin, args } for use with execFileSync.
+ * Returns { bin, args } for use with spawn.
  */
 export function buildResumeArgs({ sessionId, outputFile, prompt }) {
   return {
@@ -35,12 +35,53 @@ export function buildResumeArgs({ sessionId, outputFile, prompt }) {
 }
 
 /**
- * Execute a codex command safely using execFileSync (no shell).
- * Returns { stdout, stderr } or throws on failure.
+ * Execute a codex command using async spawn (non-blocking).
+ * Watchdog timeout defaults to 5 minutes — generous enough for slow API
+ * responses but prevents indefinite hangs from stuck processes.
+ * Returns a Promise that resolves to stdout string.
  */
+const DEFAULT_WATCHDOG_MS = 5 * 60 * 1000; // 5 minutes
+
 export function execCodex({ bin, args }, options = {}) {
-  const defaults = { encoding: 'utf8', timeout: 120000 };
-  return execFileSync(bin, args, { ...defaults, ...options });
+  const watchdogMs = options.timeout ?? DEFAULT_WATCHDOG_MS;
+
+  return new Promise((resolve, reject) => {
+    const child = nodeSpawn(bin, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let killed = false;
+
+    const watchdog = setTimeout(() => {
+      killed = true;
+      child.kill('SIGTERM');
+      reject(new Error(`codex watchdog timeout after ${watchdogMs / 1000}s`));
+    }, watchdogMs);
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    child.on('close', (code) => {
+      clearTimeout(watchdog);
+      if (killed) return; // already rejected by watchdog
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        const err = new Error(`codex exited with code ${code}: ${stderr.split('\n')[0]}`);
+        err.stdout = stdout;
+        err.stderr = stderr;
+        reject(err);
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(watchdog);
+      if (killed) return;
+      reject(new Error(`Failed to spawn codex: ${err.message}`));
+    });
+  });
 }
 
 /**
