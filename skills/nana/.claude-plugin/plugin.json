@@ -1,0 +1,7 @@
+{
+  "name": "nana",
+  "description": "Session handoff for Claude Code. Use /nana:save to snapshot current session context before closing, /nana:load to restore context in a new session, /nana:clean to manage log history. Trigger on: 'save session', 'handoff', 'context relay', '接力', '保存会话', '恢复上下文', '上下文接力'.",
+  "author": {
+    "name": "nanafox"
+  }
+}
