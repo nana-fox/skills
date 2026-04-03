@@ -13,14 +13,13 @@ description: >
 
 ### 1. 检测重复加载
 
-检查本次会话是否已经加载过 handoff（通过检查会话历史中是否存在 `nana:load` 的执行记录）。
+读取 `.claude/handoff.loaded` 文件，获取上次已加载的 save_id。再读取 `.claude/handoff.md` 中的 `save_id` 字段，若两者一致则表示本次会话已加载过：
 
-若已加载过：
 ```
-⚠ 本次会话已加载过 handoff（save_id: <id>，时间：<time>）
+⚠ 本次会话已加载过 handoff（save_id: <id>）
   若需要重新加载，请执行 /nana:load --force
 ```
-停止执行，除非用户传入 `--force` 参数。
+停止执行，除非用户传入 `--force` 参数。若 `.claude/handoff.loaded` 不存在或 save_id 不一致，继续执行。
 
 ### 2. 读取 handoff 文件
 
@@ -64,8 +63,15 @@ description: >
 
 ---
 
-### 4. 确认输出
+### 4. 写入哨兵文件并确认
 
+将本次加载的 save_id 写入 `.claude/handoff.loaded`（覆盖）：
+
+```bash
+echo "<save_id>" > .claude/handoff.loaded
+```
+
+输出：
 ```
 ✓ 上下文已恢复（save_id: <id>）
 

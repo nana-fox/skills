@@ -82,12 +82,26 @@ mkdir -p .claude
 mkdir -p ~/.claude/session-handoff/<slug>
 ```
 
-JSONL 结构：
-```json
-{"save_id":"<id>","created_at":"<ISO>","branch":"<branch>","task_type":"<type>","status":"<status>","project_root":"<path>","slug":"<slug>","handoff":"<handoff正文，换行替换为\\n>"}
+使用 python3 将所有字段编码为合法 JSON，追加到日志文件：
+
+```bash
+python3 -c "
+import json
+entry = {
+    'save_id': '$SAVE_ID',
+    'created_at': '$CREATED_AT',
+    'branch': '$BRANCH',
+    'task_type': '$TASK_TYPE',
+    'status': '$STATUS',
+    'project_root': '$PROJECT_ROOT',
+    'slug': '$SLUG',
+    'handoff': open('.claude/handoff.md').read()
+}
+print(json.dumps(entry, ensure_ascii=False))
+" >> ~/.claude/session-handoff/$SLUG/logs.jsonl
 ```
 
-用 Bash 追加一行到日志文件。
+（将上面的变量替换为实际值后执行。）
 
 ### 5. 确认输出
 
