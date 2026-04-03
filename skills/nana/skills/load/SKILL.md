@@ -2,7 +2,8 @@
 name: load
 description: >
   Load session handoff context from previous session.
-  Trigger on: /nana:load, 'load handoff', 'restore session', '恢复会话', '加载上下文', '恢复上下文'.
+  Invoke with: /nana:load
+disable-model-invocation: true
 ---
 
 # nana:load

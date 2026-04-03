@@ -2,7 +2,8 @@
 name: save
 description: >
   Save current session context as a structured handoff snapshot.
-  Trigger on: /nana:save, 'save session', 'save handoff', '保存会话', '保存上下文', '接力保存'.
+  Invoke with: /nana:save
+disable-model-invocation: true
 ---
 
 # nana:save
