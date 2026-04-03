@@ -13,6 +13,7 @@ Single AI models fail silently by rationalizing errors fluently. These skills br
 | Skill | Description |
 |-------|-------------|
 | [codex-buddy](./skills/codex-buddy/) | Claude-Codex cross-model verification with V0-V3 levels, evidence packaging, and Probe/Follow-up/Challenge protocols |
+| [nana](./skills/nana/) | Session handoff — `/nana:save` 保存上下文，`/nana:load` 3 层协议恢复，`/nana:clean` 清理日志 |
 
 ---
 
@@ -23,6 +24,7 @@ Single AI models fail silently by rationalizing errors fluently. These skills br
 ```bash
 /plugin marketplace add nana-fox/skills
 /plugin install codex-buddy@nanafox-skills
+/plugin install nana@nanafox-skills
 ```
 
 ### Manual Installation
@@ -66,6 +68,12 @@ skills/
 │   │   ├── docs/             # Development workflow docs (dev only)
 │   │   ├── discussions/      # Cross-model dialogue records (dev only)
 │   │   └── evals/            # Trigger evaluation tests (dev only)
+│   ├── nana/                 # Session handoff
+│   │   ├── .claude-plugin/plugin.json
+│   │   └── skills/
+│   │       ├── save/SKILL.md
+│   │       ├── load/SKILL.md
+│   │       └── clean/SKILL.md
 │   └── ...                   # Future: gemini-buddy, etc.
 └── README.md
 ```

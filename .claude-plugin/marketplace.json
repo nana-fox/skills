@@ -12,6 +12,11 @@
       "name": "codex-buddy",
       "description": "Cross-model verification via Claude-Codex collaboration. Provides verification levels (V0-V3), evidence packaging, and structured dialogue protocols for breaking single-model echo chambers.",
       "source": "./skills/codex-buddy"
+    },
+    {
+      "name": "nana",
+      "description": "Session handoff for Claude Code. Save context before closing a session, restore it in a new session with structured 3-layer recovery protocol.",
+      "source": "./skills/nana"
     }
   ]
 }
