@@ -105,7 +105,14 @@ Runtime 返回 JSON：`status` / `evidence_summary` / `conclusion` / `call_count
 
 **裁决：** 分歧可验证 → 直接验证，不辩论 | 无法验证 → 标 `[unresolved]` | 最多 2 次 Codex 调用
 
-**Claude 侧解析：** Codex 是外部工具，不保证遵守格式。Claude 自行提取 claims/questions/tests。提取不出 → 标 `unstructured`，整体参考。
+**综合格式（不做胜负裁决，呈现各方视角）：**
+- **Claude 视角**：probe 前我的独立分析
+- **Codex 视角**：Codex 独立发现的内容（引用原文）
+- **共识**：双方均指出的问题（置信度更高）
+- **各方独有**：一方发现而另一方未提及的内容
+- **[unresolved]**：有分歧但无法当场验证的内容
+
+Codex 不保证遵守格式 → 提取不出结构时标 `unstructured`，整体参考。
 完整 CLI 模板见 [`references/cli-examples.md`](./references/cli-examples.md)
 
 ---
