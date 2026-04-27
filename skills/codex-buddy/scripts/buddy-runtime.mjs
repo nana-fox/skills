@@ -32,8 +32,22 @@ import { appendLog, getCallCount } from './lib/audit.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_FILE = path.join(process.env.HOME || '/tmp', '.buddy', 'logs.jsonl');
+const CODEX_OUTPUT_SCHEMA = path.join(__dirname, '..', 'schemas', 'codex-output.schema.json');
+
+// Parse Codex output: try structured JSON first, fallback to unstructured text.
+function parseCodexOutput(text) {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && parsed.verdict && Array.isArray(parsed.findings)) {
+      return { mode: 'structured', data: parsed };
+    }
+  } catch { /* fallback */ }
+  return { mode: 'unstructured', data: null };
+}
 
 /**
  * Get or create a persistent buddy session ID for audit tracking.
@@ -142,12 +156,14 @@ async function actionProbe(args) {
   const outputFile = `/tmp/buddy-codex-${Date.now()}.txt`;
 
   const ephemeral = args.ephemeral !== 'false'; // default true
+  const schemaFile = fs.existsSync(CODEX_OUTPUT_SCHEMA) ? CODEX_OUTPUT_SCHEMA : null;
   const cmdSpec = buildProbeArgs({
     projectDir: args['project-dir'],
     outputFile,
     prompt,
     model: args.model || null,
     ephemeral,
+    outputSchema: schemaFile,
   });
 
   try {
@@ -161,6 +177,7 @@ async function actionProbe(args) {
     }
 
     const codexResult = fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : '';
+    const parsed = parseCodexOutput(codexResult);
 
     const envelope = createEnvelope({
       turn: parseInt(args.turn) || 0,
@@ -187,6 +204,8 @@ async function actionProbe(args) {
       ephemeral,
       followup_available: !ephemeral && !!codexSessionId,
       call_count: getCallCount(LOG_FILE, buddySessionId),
+      parse_mode: parsed.mode,
+      structured: parsed.data,
     });
   } catch (e) {
     output({ status: 'error', message: e.message.split('\n')[0], codex_output_file: outputFile });
