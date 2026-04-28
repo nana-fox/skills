@@ -21,11 +21,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { redact, shouldWriteRaw, REDACTION_POLICY_VERSION } from './redact.mjs';
+import { getBuddyHome } from './paths.mjs';
 
 const MAX_PAYLOAD_BYTES = 256 * 1024; // 256 KiB per event; larger goes to payload_ref
 
 function sessionDir() {
-  return path.join(process.env.HOME || '/tmp', '.buddy', 'sessions');
+  return path.join(getBuddyHome(), 'sessions');
 }
 
 function sessionFile(buddySessionId) {

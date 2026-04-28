@@ -1,5 +1,6 @@
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
+import { getBuddyHome } from './paths.mjs';
 
 /** Max prompt size sent to Codex (chars). Larger prompts slow inference significantly. */
 const MAX_PROMPT_CHARS = 12000;
@@ -200,7 +201,7 @@ export function checkCodexAvailable() {
  * Read and save session ID to ~/.buddy/session.json
  */
 export function saveSession(sessionId) {
-  const dir = `${process.env.HOME}/.buddy`;
+  const dir = getBuddyHome();
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(`${dir}/session.json`, JSON.stringify({ session_id: sessionId, updated: new Date().toISOString() }));
 }
@@ -209,7 +210,7 @@ export function saveSession(sessionId) {
  * Load last session ID from ~/.buddy/session.json
  */
 export function loadSession() {
-  const file = `${process.env.HOME}/.buddy/session.json`;
+  const file = `${getBuddyHome()}/session.json`;
   if (!fs.existsSync(file)) return null;
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8')).session_id;
@@ -223,7 +224,7 @@ export function loadSession() {
  * Used for budget tracking across calls within one Claude session.
  */
 export function saveBuddySession(buddySessionId) {
-  const dir = `${process.env.HOME}/.buddy`;
+  const dir = getBuddyHome();
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(`${dir}/buddy-session.json`, JSON.stringify({ buddy_session_id: buddySessionId, updated: new Date().toISOString() }));
 }
@@ -232,7 +233,7 @@ export function saveBuddySession(buddySessionId) {
  * Load buddy session ID for budget tracking.
  */
 export function loadBuddySession() {
-  const file = `${process.env.HOME}/.buddy/buddy-session.json`;
+  const file = `${getBuddyHome()}/buddy-session.json`;
   if (!fs.existsSync(file)) return null;
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8')).buddy_session_id;
@@ -246,7 +247,7 @@ export function loadBuddySession() {
  * Subsequent conversation-mode probes resume this codex session.
  */
 export function saveConversationSession(buddySessionId, codexSessionId) {
-  const dir = `${process.env.HOME}/.buddy`;
+  const dir = getBuddyHome();
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(
     `${dir}/conv-${buddySessionId}.json`,
@@ -255,7 +256,7 @@ export function saveConversationSession(buddySessionId, codexSessionId) {
 }
 
 export function loadConversationSession(buddySessionId) {
-  const file = `${process.env.HOME}/.buddy/conv-${buddySessionId}.json`;
+  const file = `${getBuddyHome()}/conv-${buddySessionId}.json`;
   if (!fs.existsSync(file)) return null;
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8')).codex_session_id || null;

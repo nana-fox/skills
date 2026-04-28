@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { getBuddyHome } from './paths.mjs';
 
-const DEFAULT_LOG = path.join(process.env.HOME || '/tmp', '.buddy', 'logs.jsonl');
+function defaultLog() { return path.join(getBuddyHome(), 'logs.jsonl'); }
 
-export function getStats(logFile = DEFAULT_LOG, sessionId = null) {
+export function getStats(logFile = defaultLog(), sessionId = null) {
   if (!fs.existsSync(logFile)) {
     return { total: 0, probes: 0, followups: 0, locals: 0, avg_latency_ms: null,
              probe_found_new_rate: null, user_adopted_rate: null, followup_triggered_rate: null };
@@ -61,6 +62,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.met
       if (next && !next.startsWith('--')) { args[key] = next; i++; }
     }
   }
-  const stats = getStats(args['log-file'] || DEFAULT_LOG, args['session-id'] || null);
+  const stats = getStats(args['log-file'] || defaultLog(), args['session-id'] || null);
   process.stdout.write(JSON.stringify(stats, null, 2) + '\n');
 }

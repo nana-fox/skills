@@ -34,13 +34,14 @@ import { createEnvelope } from './lib/envelope.mjs';
 import { appendLog, getCallCount, annotateLastEntry } from './lib/audit.mjs';
 import { getStats } from './lib/metrics.mjs';
 import { appendSessionEvent, readSessionEvents, newVerificationTaskId } from './lib/session-log.mjs';
+import { getBuddyHome } from './lib/paths.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_FILE = path.join(process.env.HOME || '/tmp', '.buddy', 'logs.jsonl');
+function logFilePath() { return path.join(getBuddyHome(), 'logs.jsonl'); }
 const CODEX_OUTPUT_SCHEMA = path.join(__dirname, '..', 'schemas', 'codex-output.schema.json');
 
 // Parse Codex output: try structured JSON first, fallback to unstructured text.
@@ -135,7 +136,7 @@ async function actionPreflight(_args) {
   output({
     status: codexAvailable ? 'ok' : 'error',
     codex_available: codexAvailable,
-    call_count: buddySessionId ? getCallCount(LOG_FILE, buddySessionId) : 0,
+    call_count: buddySessionId ? getCallCount(logFilePath(), buddySessionId) : 0,
     message: codexAvailable ? 'Codex CLI ready' : 'Codex CLI not found. Install: npm i -g @openai/codex',
   });
 }
@@ -171,7 +172,7 @@ async function actionLocal(args) {
   });
 
   const latencyMs = Date.now() - startTime;
-  appendLog(LOG_FILE, envelope, buddySessionId, args['project-dir'], latencyMs, { action: 'local' });
+  appendLog(logFilePath(), envelope, buddySessionId, args['project-dir'], latencyMs, { action: 'local' });
 
   output({
     status: result.ok ? 'verified' : 'blocked',
@@ -181,7 +182,7 @@ async function actionLocal(args) {
     conclusion: envelope.conclusion,
     unverified: envelope.unverified,
     session_id: buddySessionId,
-    call_count: getCallCount(LOG_FILE, buddySessionId),
+    call_count: getCallCount(logFilePath(), buddySessionId),
   });
 }
 
@@ -291,7 +292,7 @@ async function actionProbe(args) {
     });
 
     const latencyMs = Date.now() - startTime;
-    appendLog(LOG_FILE, envelope, buddySessionId, args['project-dir'], latencyMs, { action: 'probe' });
+    appendLog(logFilePath(), envelope, buddySessionId, args['project-dir'], latencyMs, { action: 'probe' });
 
     appendSessionEvent(buddySessionId, verificationTaskId, 'probe.codex_output', {
       codex_session_id: codexSessionId,
@@ -321,7 +322,7 @@ async function actionProbe(args) {
       resumed: !!resumedSessionId,
       followup_available: !ephemeral && !!codexSessionId,
       followup_recommended: followupRecommended,
-      call_count: getCallCount(LOG_FILE, buddySessionId),
+      call_count: getCallCount(logFilePath(), buddySessionId),
       parse_mode: parsed.mode,
       structured: parsed.data,
     });
@@ -414,7 +415,7 @@ async function actionFollowup(args) {
     });
 
     const latencyMs = Date.now() - startTime;
-    appendLog(LOG_FILE, envelope, buddySessionId, args['project-dir'], latencyMs, { action: 'followup' });
+    appendLog(logFilePath(), envelope, buddySessionId, args['project-dir'], latencyMs, { action: 'followup' });
 
     appendSessionEvent(buddySessionId, verificationTaskId, 'followup.codex_output', {
       codex_session_id: codexSessionId,
@@ -433,7 +434,7 @@ async function actionFollowup(args) {
       session_id: buddySessionId,
       verification_task_id: verificationTaskId,
       codex_session_id: codexSessionId,
-      call_count: getCallCount(LOG_FILE, buddySessionId),
+      call_count: getCallCount(logFilePath(), buddySessionId),
     });
   } catch (e) {
     appendSessionEvent(buddySessionId, verificationTaskId, 'followup.error', {
@@ -459,7 +460,7 @@ async function actionAnnotate(args) {
     output({ status: 'error', message: 'No fields to annotate. Use --probe-found-new and/or --user-adopted.' });
     return;
   }
-  const ok = annotateLastEntry(LOG_FILE, buddySessionId, fields);
+  const ok = annotateLastEntry(logFilePath(), buddySessionId, fields);
   if (ok) {
     // Default verification_task_id: pick the latest probe.codex_output / followup.codex_output
     // from this buddy session's log, so annotate is properly linked to the probe it annotates.
@@ -514,7 +515,7 @@ async function actionReplay(args) {
 }
 
 async function actionMetrics(args) {
-  const stats = getStats(LOG_FILE, args['session-id'] || null);
+  const stats = getStats(logFilePath(), args['session-id'] || null);
   output({ status: 'ok', ...stats });
 }
 
