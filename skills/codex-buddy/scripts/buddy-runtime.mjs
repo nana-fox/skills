@@ -512,6 +512,37 @@ async function actionLogSynthesis(args) {
   output({ status: 'ok', session_id: buddySessionId, verification_task_id: verificationTaskId, message: 'Synthesis logged' });
 }
 
+// W2: Self-evidence — let Claude echo a reply slice into session log for audit.
+// Best-effort: if Claude forgets to call, evals/self-evidence.eval.mjs warns later;
+// not fail-closed. Three kinds: vlevel-header / synthesis / narrate-discipline.
+const REPLY_KINDS = new Set(['vlevel-header', 'synthesis', 'narrate-discipline']);
+async function actionLogReply(args) {
+  const buddySessionId = getOrCreateBuddySessionId(args['session-id']);
+  const verificationTaskId = args['verification-task-id'] || 'unknown';
+  const kind = args.kind;
+  if (!REPLY_KINDS.has(kind)) {
+    output({ status: 'error', message: `Invalid --kind. Expected one of: ${[...REPLY_KINDS].join(', ')}` });
+    return;
+  }
+  let content = '';
+  if (args['content-stdin'] === 'true' || args.content === '-') {
+    content = await readAllStdin();
+  } else if (args.content && fs.existsSync(args.content)) {
+    content = fs.readFileSync(args.content, 'utf8');
+  } else if (typeof args.content === 'string' && args.content !== 'true') {
+    content = args.content;
+  }
+  // narrate-discipline can legitimately be empty (signaling "I obeyed, no slip")
+  if (!content.length && kind !== 'narrate-discipline') {
+    output({ status: 'error', message: 'Empty content. Pass --content <file|->, --content-stdin, or inline string.' });
+    return;
+  }
+  appendSessionEvent(buddySessionId, verificationTaskId, `reply.${kind}`, {
+    kind,
+  }, content || '(empty)');
+  output({ status: 'ok', session_id: buddySessionId, verification_task_id: verificationTaskId, kind, message: 'Reply logged' });
+}
+
 async function actionReplay(args) {
   const buddySessionId = args['session-id'] || loadBuddySession();
   if (!buddySessionId) {
@@ -530,7 +561,7 @@ async function actionMetrics(args) {
 async function main() {
   const args = parseArgs(process.argv);
 
-  const noProjectDirActions = ['preflight', 'annotate', 'metrics', 'log-synthesis', 'replay'];
+  const noProjectDirActions = ['preflight', 'annotate', 'metrics', 'log-synthesis', 'log-reply', 'replay'];
   if (!args['project-dir'] && !noProjectDirActions.includes(args.action)) {
     output({ status: 'error', message: 'Missing required --project-dir' });
     return;
@@ -560,6 +591,9 @@ async function main() {
       break;
     case 'log-synthesis':
       await actionLogSynthesis(args);
+      break;
+    case 'log-reply':
+      await actionLogReply(args);
       break;
     case 'replay':
       await actionReplay(args);

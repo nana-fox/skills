@@ -209,6 +209,44 @@ describe('CLI: stdin evidence + replay + log-synthesis', () => {
     assert.equal(json.structured?.verdict, 'proceed');
   });
 
+  test('--action log-reply happy path writes reply.<kind> event', () => {
+    const sid = `buddy-w2-${Date.now()}`;
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-w2-'));
+    try {
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'log-reply', '--kind', 'vlevel-header',
+         '--content', 'V2[METHOD] | route reason',
+         '--session-id', sid, '--verification-task-id', 'vt-1'],
+        { encoding: 'utf8', timeout: 10000, env: { ...process.env, BUDDY_HOME: tmpHome } }
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'ok');
+      assert.equal(json.kind, 'vlevel-header');
+      const log = fs.readFileSync(path.join(tmpHome, 'sessions', `${sid}.jsonl`), 'utf8');
+      assert.match(log, /"event":"reply\.vlevel-header"/);
+      assert.match(log, /V2\[METHOD\]/);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action log-reply rejects invalid --kind', () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-w2-'));
+    try {
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'log-reply', '--kind', 'bogus', '--content', 'x'],
+        { encoding: 'utf8', timeout: 10000, env: { ...process.env, BUDDY_HOME: tmpHome } }
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'error');
+      assert.match(json.message, /Invalid --kind/);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   test('--action probe with neither --evidence nor --evidence-stdin returns error', () => {
     const result = execSync(
       `node "${RUNTIME}" --action probe --project-dir /tmp`,

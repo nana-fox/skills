@@ -121,6 +121,9 @@ Codex 没有新发现 → 写 `no-op`，不编造。
 
 **每次 probe 综合后必须标注：** `--action annotate --probe-found-new <true|false> --user-adopted <true|false>`（是否发现新问题 / 是否采纳建议）
 
+**Self-evidence（best-effort 审计）：** 综合后可选记录 V-level header / 综合段 / 输出纪律遵守情况进 jsonl，便于后续 evals 校验：
+`--action log-reply --kind {vlevel-header|synthesis|narrate-discipline} --content-stdin`
+
 ---
 
 ## 升级 / 停止规则
