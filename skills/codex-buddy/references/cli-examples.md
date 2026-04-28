@@ -44,7 +44,16 @@ node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action replay --session-id buddy-
 - `probe.start` / `probe.codex_output` / `probe.synthesis` / `annotate` / `*.error`
 - 每行含 `payload`（默认 redacted）+ `payload_sha256` + `payload_bytes` + `redaction_policy`
 - 大于 256KiB 的 payload 转 `payload_ref`（外部文件，路径 `~/.buddy/sessions/<sid>.payloads/`）
-- `BUDDY_AUDIT_RAW=1` 跳过 redaction（仅本地调试用）
+
+**敏感信息 / Redaction**：
+- 默认 redact 模式覆盖：OpenAI sk-/sk-proj-/sk-svcacct-、Anthropic sk-ant-、GitHub ghp_/gho_/github_pat_、AWS AKIA、Slack xox[abprs]-、Stripe rk_/sk_、JWT、`Authorization: Bearer/Basic/Token`、env-style key=value（api_key/token/password/access_token/refresh_token/client_secret 等）
+- 写入 session log 前才 redact；runtime 传给 codex 的 prompt **不脱敏**（脱敏是审计层，不影响推理质量）
+- `BUDDY_AUDIT_RAW=1`：写 raw payload 到 session log（仅本地调试用，回归后须 unset）
+
+**Heredoc 边界条件**（用 `cat <<'EOF' | runtime` 传 evidence 时）：
+- 若 evidence 内容里独立一行恰好就是 `EOF`，shell 会提前截断 → 用更长且不可能撞的标记，比如 `BUDDY_EVIDENCE_END`
+- 用 `<<'XXX'`（带引号）禁用 `$var`/backtick 展开，避免 evidence 里的 `$1`、反引号被 shell 解释
+- evidence 含大量 binary/non-UTF8 时考虑 file 形式（`--evidence <path>`）而非 stdin
 
 **Session Policy 选择：**
 - `isolated`（默认）— 每次 probe 独立，无上下文，不被前次结论污染
