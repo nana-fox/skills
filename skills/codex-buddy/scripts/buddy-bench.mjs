@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 /**
- * buddy-bench.mjs — latency benchmark for codex probes (W4a).
+ * buddy-bench.mjs — latency benchmark for codex probes.
  *
- * Reads ~/.buddy/sessions/*.jsonl, groups probe.codex_output events by runtime,
- * outputs p50/p95/avg/n + first_byte_ms breakdown when available.
+ * Default mode: reads ~/.buddy/sessions/*.jsonl, groups probe.codex_output
+ * events by runtime, outputs p50/p95/avg/n + first_byte_ms breakdown.
  *
- * Use this to decide whether broker (W4b) is worth implementing:
- *   startup_pct = first_byte_ms / latency_ms
- *   If startup_pct > 30% → broker can save real time (proceed to W4b).
- *   If startup_pct < 10% → model inference dominates; broker won't help much.
+ * broker-startup-delta mode (W9 acceptance):
+ *   For each buddy session: compare the FIRST broker probe (fresh app-server
+ *   spawn) vs subsequent probes (warm reuse). Reports median delta.
+ *   Acceptance gate: median(reuse) - median(first) ≥ -5000ms
+ *   (reuse should be ≥5s faster than first).
  *
  * Usage:
  *   node scripts/buddy-bench.mjs [--days N]
+ *   node scripts/buddy-bench.mjs --mode broker-startup-delta [--days N]
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,6 +23,7 @@ const args = Object.fromEntries(
   process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1] ?? 'true'] : null).filter(Boolean)
 );
 const days = parseInt(args.days || '30', 10);
+const mode = args.mode || 'default';
 const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
 const sessionsDir = path.join(getBuddyHome(), 'sessions');
@@ -88,3 +91,50 @@ for (const [rt, m] of Object.entries(report.runtimes)) {
   }
 }
 if (decisions.length) console.error('\n--- Decision hints ---\n' + decisions.join('\n'));
+
+// ─── broker-startup-delta mode ───────────────────────────────────────────────
+if (mode === 'broker-startup-delta') {
+  // Group broker probes by buddy_session_id, ordered by ts.
+  const bySession = new Map();
+  for (const f of fs.readdirSync(sessionsDir).filter(x => x.endsWith('.jsonl'))) {
+    const sid = f.replace('.jsonl', '');
+    const lines = fs.readFileSync(path.join(sessionsDir, f), 'utf8').split('\n').filter(Boolean);
+    for (const line of lines) {
+      let e;
+      try { e = JSON.parse(line); } catch { continue; }
+      if (e.event !== 'probe.codex_output' || e.runtime !== 'broker') continue;
+      const ts = Date.parse(e.ts || 0);
+      if (!Number.isFinite(ts) || ts < cutoff) continue;
+      if (!bySession.has(sid)) bySession.set(sid, []);
+      bySession.get(sid).push({ ts, latency_ms: e.latency_ms || 0 });
+    }
+  }
+
+  const firstLatencies = [];
+  const reuseLatencies = [];
+  for (const probes of bySession.values()) {
+    if (probes.length < 2) continue;
+    probes.sort((a, b) => a.ts - b.ts);
+    firstLatencies.push(probes[0].latency_ms);
+    for (const p of probes.slice(1)) reuseLatencies.push(p.latency_ms);
+  }
+
+  const medFirst = pct(firstLatencies, 50);
+  const medReuse = pct(reuseLatencies, 50);
+  const delta = medFirst != null && medReuse != null ? medReuse - medFirst : null;
+
+  const result = {
+    mode: 'broker-startup-delta',
+    sessions_with_reuse: bySession.size,
+    first_probe_n: firstLatencies.length,
+    reuse_probe_n: reuseLatencies.length,
+    first_probe_median_ms: medFirst,
+    reuse_probe_median_ms: medReuse,
+    delta_ms: delta,
+    acceptance_gate_ms: -5000,
+    acceptance: delta != null ? (delta <= -5000 ? 'PASS' : 'FAIL') : 'INSUFFICIENT_DATA',
+    note: delta == null ? 'Need ≥2 broker probes in at least one buddy session.' : null,
+  };
+  console.log(JSON.stringify(result, null, 2));
+  process.exit(result.acceptance === 'FAIL' ? 1 : 0);
+}

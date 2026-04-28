@@ -32,7 +32,9 @@ import { runAppServerTurn } from './lib/codex-app-server.mjs';
 import {
   spawnBroker, sendCommand as brokerSendCommand,
   loadBrokerThread, saveBrokerThread, clearBrokerThread,
+  loadBrokerLastTask,
 } from './lib/buddy-broker.mjs';
+import { checkTopicDrift } from './lib/topic-drift.mjs';
 import { collectEvidence } from './lib/local-evidence.mjs';
 import { createEnvelope } from './lib/envelope.mjs';
 import { appendLog, getCallCount, annotateLastEntry } from './lib/audit.mjs';
@@ -229,12 +231,14 @@ async function actionProbe(args) {
   const schemaFile = fs.existsSync(CODEX_OUTPUT_SCHEMA) ? CODEX_OUTPUT_SCHEMA : null;
 
   // Runtime selection:
-  //   BUDDY_USE_BROKER=1     → broker (W8 long-lived codex app-server, persistent thread)
-  //   BUDDY_USE_APP_SERVER=1 → spawn-per-call codex app-server (Stage 3-A)
-  //   default                → codex exec (legacy)
-  // Resume always goes through `codex exec resume` (broker thread persistence
-  // and codex exec resume are independent worlds — see ROADMAP Stage 3-C).
-  const useBroker = process.env.BUDDY_USE_BROKER === '1' && !resumedSessionId;
+  //   BUDDY_USE_BROKER=1        → broker (W8 long-lived codex app-server, persistent thread)
+  //   BUDDY_USE_LEGACY_EXEC=1   → force exec path even if BUDDY_USE_BROKER=1 (emergency fallback)
+  //   BUDDY_USE_APP_SERVER=1    → spawn-per-call codex app-server (Stage 3-A)
+  //   default                   → codex exec (legacy)
+  // Resume always goes through `codex exec resume` (broker and exec are separate namespaces).
+  const useBroker = process.env.BUDDY_USE_BROKER === '1'
+    && process.env.BUDDY_USE_LEGACY_EXEC !== '1'
+    && !resumedSessionId;
   const useAppServer = !useBroker && process.env.BUDDY_USE_APP_SERVER === '1' && !resumedSessionId;
 
   const freshThread = args['fresh-thread'] === 'true';
@@ -260,14 +264,24 @@ async function actionProbe(args) {
     let codexSessionId;
     let firstByteMs = null;
     if (useBroker) {
+      // W6.5: topic-drift tripwire — compare last task with current before reusing thread.
+      const prevTask = freshThread ? null : loadBrokerLastTask(buddySessionId, args['project-dir']);
+      const { warning: driftWarning } = checkTopicDrift(prevTask, prompt);
+      if (driftWarning) process.stderr.write(driftWarning + '\n');
+
       // Pre-W8 conv thread: stored per (buddy session, worktree). --fresh-thread bypasses.
       const persistedThread = freshThread
         ? null
         : loadBrokerThread(buddySessionId, args['project-dir']);
       // Ensure broker is up (lazy spawn, reuses live broker).
-      const { paths: brokerPaths } = await spawnBroker({
-        projectRoot: args['project-dir'],
-      });
+      const brokerResult = await spawnBroker({ projectRoot: args['project-dir'] });
+      const { paths: brokerPaths } = brokerResult;
+      // UX: tell user whether broker was just spawned or reused.
+      if (brokerResult.reused === false) {
+        process.stderr.write(`[buddy] broker spawned, ready (pid=${brokerResult.pid})\n`);
+      } else if (persistedThread) {
+        process.stderr.write(`[buddy] reusing thread ${persistedThread}\n`);
+      }
       const outputSchemaObj = schemaFile
         ? (() => { try { return JSON.parse(fs.readFileSync(schemaFile, 'utf8')); } catch { return null; } })()
         : null;
@@ -288,9 +302,9 @@ async function actionProbe(args) {
       fs.writeFileSync(outputFile, r.finalMessage || '');
       codexSessionId = r.threadId || null;
       firstByteMs = typeof r.first_byte_ms === 'number' ? r.first_byte_ms : null;
-      // Persist threadId for next probe in this buddy session, unless fresh.
+      // Persist threadId + first-line task for next probe (W6.5 drift check).
       if (!freshThread && codexSessionId) {
-        saveBrokerThread(buddySessionId, args['project-dir'], codexSessionId);
+        saveBrokerThread(buddySessionId, args['project-dir'], codexSessionId, undefined, prompt.split('\n')[0]);
       } else if (freshThread) {
         // Defensive: if user toggled --fresh-thread, also drop any previous
         // persisted thread so the next default probe doesn't accidentally

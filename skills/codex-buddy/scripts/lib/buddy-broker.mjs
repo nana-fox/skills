@@ -291,7 +291,7 @@ export function loadBrokerThread(buddySessionId, projectRoot, home) {
   }
 }
 
-export function saveBrokerThread(buddySessionId, projectRoot, threadId, home) {
+export function saveBrokerThread(buddySessionId, projectRoot, threadId, home, lastTask = null) {
   if (!buddySessionId || !threadId) return;
   const buddyHome = home || getBuddyHome();
   fs.mkdirSync(buddyHome, { recursive: true });
@@ -303,9 +303,24 @@ export function saveBrokerThread(buddySessionId, projectRoot, threadId, home) {
       thread_id: threadId,
       buddy_session_id: buddySessionId,
       worktree_hash: hash,
+      last_task: lastTask || null, // W6.5: first line of last task_to_judge for topic-drift check
       updated: new Date().toISOString(),
     }),
   );
+}
+
+/** Read the last_task stored alongside the thread for W6.5 drift detection. */
+export function loadBrokerLastTask(buddySessionId, projectRoot, home) {
+  if (!buddySessionId) return null;
+  const buddyHome = home || getBuddyHome();
+  const hash = getWorktreeHash(projectRoot);
+  const file = brokerThreadFile(buddyHome, buddySessionId, hash);
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')).last_task || null;
+  } catch {
+    return null;
+  }
 }
 
 export function clearBrokerThread(buddySessionId, projectRoot, home) {

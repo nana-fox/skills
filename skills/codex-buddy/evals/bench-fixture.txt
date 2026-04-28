@@ -1,0 +1,18 @@
+task_to_judge: Is the broker startup delta significant enough to justify persistent codex app-server?
+
+raw_evidence: |
+  Measurement context: buddy-broker W8, codex app-server JSON-RPC, single machine.
+  Five first-probe latencies (SessionStart reset before each): 45s, 52s, 38s, 47s, 41s
+  Five reuse-probe latencies (same broker session, second call): 12s, 8s, 15s, 9s, 11s
+
+  Code path comparison:
+    exec mode: spawn codex each time (200-400ms startup) + inference (30-70s)
+    broker first: spawn app-server once + initialize + thread/start + turn/start + inference
+    broker reuse: skip spawn + init; just turn/start + inference on warm thread
+
+  Question: does median(reuse) - median(first) meet the ≥5000ms acceptance threshold?
+  Median first: 45s; Median reuse: 11s; Delta: 34s (well above 5000ms threshold)
+
+known_omissions: These are simulated figures for bench fixture. Real data comes from
+  `node scripts/buddy-bench.mjs --mode broker-startup-delta --runs 5 --prompt evals/bench-fixture.txt`
+  after running ≥5 probe pairs with actual codex CLI.
