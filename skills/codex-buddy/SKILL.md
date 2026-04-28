@@ -144,3 +144,4 @@ Codex 没有新发现 → 写 `no-op`，不编造。
 4. 前置检查：首次调用前运行 `--action preflight`；不可用 → `[blocked: codex unavailable]`
 5. 证据脱敏：传原始证据前去除 secret/token/credential/cookie
 6. 不传 `--model`：默认不加 `--model`；仅用户明确要求时才传
+7. Broker 模式（opt-in，W7-W8）：`BUDDY_USE_BROKER=1` 起常驻 codex app-server，跨 probe 复用持久 thread；`--fresh-thread` 重置；real-data 验收前**不当默认**

@@ -209,6 +209,70 @@ describe('CLI: stdin evidence + replay + log-synthesis', () => {
     assert.equal(json.structured?.verdict, 'proceed');
   });
 
+  test('--action probe with BUDDY_USE_BROKER=1 routes through broker, persists threadId', () => {
+    const evidence = path.join(os.tmpdir(), `w8-evidence-${Date.now()}.txt`);
+    fs.writeFileSync(evidence, 'task_to_judge: broker test\nraw_evidence: x\nknown_omissions: none\n');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-w8-'));
+    const stubBin = path.resolve(__dirname, 'fixtures', 'codex-app-server-stub.mjs');
+    fs.chmodSync(stubBin, 0o755);
+    const sid = `buddy-w8-${Date.now()}`;
+    try {
+      const env = {
+        ...process.env,
+        BUDDY_STUB_CODEX: '1',           // bypass checkCodexAvailable in actionProbe
+        BUDDY_USE_BROKER: '1',           // route via broker
+        BUDDY_BROKER_CODEX_BIN: stubBin, // broker spawns the stub instead of real codex
+        BUDDY_HOME: tmpHome,
+        BUDDY_STUB_REPLY: '{"verdict":"proceed","findings":[],"questions":[]}',
+      };
+      const r1 = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'probe', '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', sid],
+        { encoding: 'utf8', timeout: 20000, env },
+      );
+      const j1 = JSON.parse(r1.stdout);
+      assert.equal(j1.status, 'verified', `first probe must verify (stderr=${r1.stderr})`);
+      assert.equal(j1.runtime, 'broker');
+      assert.match(j1.codex_session_id || '', /^thr-\d+$/);
+      // conv-thread file must be persisted under tmpHome.
+      const threadFiles = fs.readdirSync(tmpHome).filter(f => f.startsWith('broker-thread-'));
+      assert.ok(threadFiles.length >= 1, 'broker-thread-<sid>-<hash>.json must exist');
+
+      // Second probe in same buddy session must reuse the same threadId.
+      const r2 = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'probe', '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', sid],
+        { encoding: 'utf8', timeout: 20000, env },
+      );
+      const j2 = JSON.parse(r2.stdout);
+      assert.equal(j2.runtime, 'broker');
+      assert.equal(j2.codex_session_id, j1.codex_session_id, 'threadId must be reused across probes');
+
+      // --fresh-thread must allocate a new threadId.
+      const r3 = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'probe', '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', sid, '--fresh-thread'],
+        { encoding: 'utf8', timeout: 20000, env },
+      );
+      const j3 = JSON.parse(r3.stdout);
+      assert.equal(j3.runtime, 'broker');
+      assert.notEqual(j3.codex_session_id, j1.codex_session_id, '--fresh-thread must mint a new id');
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      // Best-effort: stop any broker the test spawned, then remove tmpHome.
+      try {
+        spawnSync('node',
+          [path.resolve(__dirname, '..', 'buddy-broker-cli.mjs'), 'stop',
+           '--project-dir', '/tmp', '--force'],
+          { encoding: 'utf8', timeout: 5000, env: { ...process.env, BUDDY_HOME: tmpHome } });
+      } catch {}
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   test('--action log-reply happy path writes reply.<kind> event', () => {
     const sid = `buddy-w2-${Date.now()}`;
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-w2-'));

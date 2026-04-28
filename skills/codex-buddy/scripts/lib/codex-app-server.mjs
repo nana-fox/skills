@@ -103,15 +103,27 @@ class JsonRpcClient {
   }
 }
 
+/**
+ * Spawn `codex app-server` as a long-lived child. The W8 broker invokes this
+ * once and keeps the process alive across many turns. Honours
+ * BUDDY_BROKER_CODEX_BIN (test stubbing) — defaults to "codex".
+ */
 function spawnAppServer(cwd) {
+  const bin = process.env.BUDDY_BROKER_CODEX_BIN || 'codex';
   // -c mcp_servers={} skips MCP server startup (matches exec mode optimization).
-  const proc = spawn('codex', ['app-server', '-c', 'mcp_servers={}'], {
+  // When using a test stub, allow it to receive plain stdio with no extra args.
+  const args = process.env.BUDDY_BROKER_CODEX_BIN
+    ? []
+    : ['app-server', '-c', 'mcp_servers={}'];
+  const proc = spawn(bin, args, {
     cwd,
     env: process.env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   return proc;
 }
+
+export { JsonRpcClient, spawnAppServer };
 
 /**
  * Run a single Codex turn via app-server. Spawn-per-call (Phase A).

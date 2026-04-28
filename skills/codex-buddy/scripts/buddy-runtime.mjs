@@ -29,6 +29,10 @@ import {
   trimPrompt,
 } from './lib/codex-adapter.mjs';
 import { runAppServerTurn } from './lib/codex-app-server.mjs';
+import {
+  spawnBroker, sendCommand as brokerSendCommand,
+  loadBrokerThread, saveBrokerThread, clearBrokerThread,
+} from './lib/buddy-broker.mjs';
 import { collectEvidence } from './lib/local-evidence.mjs';
 import { createEnvelope } from './lib/envelope.mjs';
 import { appendLog, getCallCount, annotateLastEntry } from './lib/audit.mjs';
@@ -224,11 +228,18 @@ async function actionProbe(args) {
   const ephemeral = isConversation ? false : (args.ephemeral !== 'false');
   const schemaFile = fs.existsSync(CODEX_OUTPUT_SCHEMA) ? CODEX_OUTPUT_SCHEMA : null;
 
-  // Phase A: BUDDY_USE_APP_SERVER=1 routes new probes through codex app-server
-  // (JSON-RPC, stdio, no broker yet). Resume still goes through `codex exec resume`.
-  const useAppServer = process.env.BUDDY_USE_APP_SERVER === '1' && !resumedSessionId;
+  // Runtime selection:
+  //   BUDDY_USE_BROKER=1     → broker (W8 long-lived codex app-server, persistent thread)
+  //   BUDDY_USE_APP_SERVER=1 → spawn-per-call codex app-server (Stage 3-A)
+  //   default                → codex exec (legacy)
+  // Resume always goes through `codex exec resume` (broker thread persistence
+  // and codex exec resume are independent worlds — see ROADMAP Stage 3-C).
+  const useBroker = process.env.BUDDY_USE_BROKER === '1' && !resumedSessionId;
+  const useAppServer = !useBroker && process.env.BUDDY_USE_APP_SERVER === '1' && !resumedSessionId;
 
-  const cmdSpec = useAppServer
+  const freshThread = args['fresh-thread'] === 'true';
+
+  const cmdSpec = (useBroker || useAppServer)
     ? null
     : (resumedSessionId
         ? buildResumeArgs({ sessionId: resumedSessionId, outputFile, prompt })
@@ -241,14 +252,52 @@ async function actionProbe(args) {
             outputSchema: schemaFile,
           }));
 
-  const runtimeLabel = useAppServer ? 'app-server' : 'exec';
+  const runtimeLabel = useBroker ? 'broker' : (useAppServer ? 'app-server' : 'exec');
   process.stderr.write(`[buddy] probe started, runtime=${runtimeLabel}, sid=${buddySessionId}, ETA 30-80s\n`);
 
   try {
     const probeStartTime = startTime;
     let codexSessionId;
     let firstByteMs = null;
-    if (useAppServer) {
+    if (useBroker) {
+      // Pre-W8 conv thread: stored per (buddy session, worktree). --fresh-thread bypasses.
+      const persistedThread = freshThread
+        ? null
+        : loadBrokerThread(buddySessionId, args['project-dir']);
+      // Ensure broker is up (lazy spawn, reuses live broker).
+      const { paths: brokerPaths } = await spawnBroker({
+        projectRoot: args['project-dir'],
+      });
+      const outputSchemaObj = schemaFile
+        ? (() => { try { return JSON.parse(fs.readFileSync(schemaFile, 'utf8')); } catch { return null; } })()
+        : null;
+      const reply = await brokerSendCommand(brokerPaths, {
+        method: 'turn/run',
+        params: {
+          prompt: trimPrompt(prompt),
+          projectDir: args['project-dir'],
+          model: args.model || null,
+          outputSchema: outputSchemaObj,
+          ephemeral,
+          threadId: persistedThread,
+        },
+        timeoutMs: 10 * 60 * 1000,
+      });
+      if (reply.error) throw new Error(`broker turn failed: ${reply.error.message}`);
+      const r = reply.result || {};
+      fs.writeFileSync(outputFile, r.finalMessage || '');
+      codexSessionId = r.threadId || null;
+      firstByteMs = typeof r.first_byte_ms === 'number' ? r.first_byte_ms : null;
+      // Persist threadId for next probe in this buddy session, unless fresh.
+      if (!freshThread && codexSessionId) {
+        saveBrokerThread(buddySessionId, args['project-dir'], codexSessionId);
+      } else if (freshThread) {
+        // Defensive: if user toggled --fresh-thread, also drop any previous
+        // persisted thread so the next default probe doesn't accidentally
+        // resume the freshly forked one.
+        clearBrokerThread(buddySessionId, args['project-dir']);
+      }
+    } else if (useAppServer) {
       // app-server expects outputSchema as a parsed JSON object, not a file path.
       const outputSchemaObj = schemaFile
         ? (() => { try { return JSON.parse(fs.readFileSync(schemaFile, 'utf8')); } catch { return null; } })()
@@ -303,7 +352,7 @@ async function actionProbe(args) {
     appendSessionEvent(buddySessionId, verificationTaskId, 'probe.codex_output', {
       codex_session_id: codexSessionId,
       ephemeral,
-      runtime: useAppServer ? 'app-server' : 'exec',
+      runtime: runtimeLabel,
       parse_mode: parsed.mode,
       verdict: parsed.data?.verdict || null,
       latency_ms: latencyMs,
@@ -327,7 +376,7 @@ async function actionProbe(args) {
       codex_session_id: codexSessionId,
       ephemeral,
       session_policy: sessionPolicy,
-      runtime: useAppServer ? 'app-server' : 'exec',
+      runtime: runtimeLabel,
       resumed: !!resumedSessionId,
       followup_available: !ephemeral && !!codexSessionId,
       followup_recommended: followupRecommended,

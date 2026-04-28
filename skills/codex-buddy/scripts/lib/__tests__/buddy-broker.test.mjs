@@ -127,3 +127,93 @@ async function waitGone(p, timeoutMs = 2000) {
     await new Promise((r) => setTimeout(r, 25));
   }
 }
+
+// ─── W8: broker turn/run forwarding (codex stubbed via BUDDY_BROKER_CODEX_BIN) ───
+const STUB_BIN = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  '..',
+  '..',
+  '__tests__',
+  'fixtures',
+  'codex-app-server-stub.mjs',
+);
+
+async function spawnBrokerWithStub(projectRoot) {
+  // The stub script is invoked directly via shebang; ensure executable bit.
+  fs.chmodSync(STUB_BIN, 0o755);
+  process.env.BUDDY_BROKER_CODEX_BIN = STUB_BIN;
+  return spawnBroker({ projectRoot, home: TEST_HOME });
+}
+
+describe('buddy-broker — W8 turn/run forwarding', () => {
+  test('turn/run with no threadId → thread/start + turn returns finalMessage + threadId', async () => {
+    const projectRoot = '/tmp/buddy-broker-turn-' + Date.now();
+    fs.mkdirSync(projectRoot, { recursive: true });
+    const paths = getBrokerPaths(TEST_HOME, projectRoot);
+    process.env.BUDDY_STUB_REPLY = 'hello-from-stub';
+    await spawnBrokerWithStub(projectRoot);
+    try {
+      const reply = await sendCommand(paths, {
+        method: 'turn/run',
+        params: { prompt: 'is this safe?' },
+        timeoutMs: 5000,
+      });
+      assert.equal(reply.result?.finalMessage, 'hello-from-stub');
+      assert.match(reply.result?.threadId || '', /^thr-\d+$/);
+      assert.equal(typeof reply.result?.latency_ms, 'number');
+    } finally {
+      delete process.env.BUDDY_STUB_REPLY;
+      delete process.env.BUDDY_BROKER_CODEX_BIN;
+      await sendShutdown(paths);
+    }
+  });
+
+  test('turn/run with existing threadId reuses it (no thread/start)', async () => {
+    const projectRoot = '/tmp/buddy-broker-thread-reuse-' + Date.now();
+    fs.mkdirSync(projectRoot, { recursive: true });
+    const paths = getBrokerPaths(TEST_HOME, projectRoot);
+    process.env.BUDDY_STUB_REPLY = 'reuse-reply';
+    await spawnBrokerWithStub(projectRoot);
+    try {
+      // First turn allocates a thread.
+      const r1 = await sendCommand(paths, {
+        method: 'turn/run',
+        params: { prompt: 'first' },
+        timeoutMs: 5000,
+      });
+      const tid = r1.result?.threadId;
+      assert.match(tid || '', /^thr-\d+$/);
+      // Second turn passes the threadId in — stub records it but does NOT
+      // mint a new one (which would have indexed nextThreadIdx).
+      const r2 = await sendCommand(paths, {
+        method: 'turn/run',
+        params: { prompt: 'second', threadId: tid },
+        timeoutMs: 5000,
+      });
+      assert.equal(r2.result?.threadId, tid, 'threadId must be reused');
+      assert.equal(r2.result?.finalMessage, 'reuse-reply');
+    } finally {
+      delete process.env.BUDDY_STUB_REPLY;
+      delete process.env.BUDDY_BROKER_CODEX_BIN;
+      await sendShutdown(paths);
+    }
+  });
+
+  test('status reports codex_ready=true once a turn has run', async () => {
+    const projectRoot = '/tmp/buddy-broker-status-' + Date.now();
+    fs.mkdirSync(projectRoot, { recursive: true });
+    const paths = getBrokerPaths(TEST_HOME, projectRoot);
+    await spawnBrokerWithStub(projectRoot);
+    try {
+      // Before any turn: codex not yet spawned
+      const before = await sendCommand(paths, { method: 'status' });
+      assert.equal(before.result?.codex_ready, false);
+      await sendCommand(paths, { method: 'turn/run', params: { prompt: 'go' }, timeoutMs: 5000 });
+      const after = await sendCommand(paths, { method: 'status' });
+      assert.equal(after.result?.codex_ready, true);
+    } finally {
+      delete process.env.BUDDY_BROKER_CODEX_BIN;
+      await sendShutdown(paths);
+    }
+  });
+});

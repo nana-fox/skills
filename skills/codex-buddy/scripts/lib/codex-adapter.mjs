@@ -105,16 +105,20 @@ export function execCodex({ bin, args }, options = {}) {
       reject(new Error(`codex watchdog timeout after ${watchdogMs / 1000}s`));
     }, watchdogMs);
 
-    child.stdout.on('data', (data) => {
+    // W9: first_byte tracks the first signal of activity. codex CLI emits the
+    // version banner + reasoning items on stderr long before the final agent
+    // message lands on stdout. Pre-W9 we measured stdout first-byte, which is
+    // ~equal to total latency for short answers (伪指标). Use stderr instead.
+    child.stderr.on('data', (data) => {
       if (firstByteAt === null) {
         firstByteAt = Date.now();
         if (typeof options.onFirstByte === 'function') {
           try { options.onFirstByte(firstByteAt - spawnedAt); } catch {}
         }
       }
-      stdout += data.toString();
+      stderr += data.toString();
     });
-    child.stderr.on('data', (data) => { stderr += data.toString(); });
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
 
     child.on('close', (code) => {
       clearTimeout(watchdog);

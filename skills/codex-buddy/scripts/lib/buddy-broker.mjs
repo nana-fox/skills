@@ -270,3 +270,50 @@ export async function sendShutdown(paths) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// ─── W8: thread persistence per (buddy session, worktree) ───
+// Conv file: ${BUDDY_HOME}/broker-thread-<buddy-sid>-<worktree-hash>.json
+// Distinct from saveConversationSession (which keys codex exec session-ids).
+
+function brokerThreadFile(home, buddySessionId, worktreeHash) {
+  return path.join(home, `broker-thread-${buddySessionId}-${worktreeHash}.json`);
+}
+
+export function loadBrokerThread(buddySessionId, projectRoot, home) {
+  if (!buddySessionId) return null;
+  const buddyHome = home || getBuddyHome();
+  const hash = getWorktreeHash(projectRoot);
+  const file = brokerThreadFile(buddyHome, buddySessionId, hash);
+  if (!fs.existsSync(file)) return null;
+  try {
+    const obj = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return obj.thread_id || null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveBrokerThread(buddySessionId, projectRoot, threadId, home) {
+  if (!buddySessionId || !threadId) return;
+  const buddyHome = home || getBuddyHome();
+  fs.mkdirSync(buddyHome, { recursive: true });
+  const hash = getWorktreeHash(projectRoot);
+  const file = brokerThreadFile(buddyHome, buddySessionId, hash);
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      thread_id: threadId,
+      buddy_session_id: buddySessionId,
+      worktree_hash: hash,
+      updated: new Date().toISOString(),
+    }),
+  );
+}
+
+export function clearBrokerThread(buddySessionId, projectRoot, home) {
+  if (!buddySessionId) return;
+  const buddyHome = home || getBuddyHome();
+  const hash = getWorktreeHash(projectRoot);
+  const file = brokerThreadFile(buddyHome, buddySessionId, hash);
+  try { fs.unlinkSync(file); } catch {}
+}
