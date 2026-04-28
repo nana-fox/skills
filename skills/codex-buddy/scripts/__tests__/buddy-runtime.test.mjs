@@ -99,6 +99,24 @@ describe('redact + session-log', () => {
     assert.equal(redact('plain text without secrets'), 'plain text without secrets');
   });
 
+  test('redact() masks sk-proj-/sk-svcacct-/github_pat_/Bearer headers', async () => {
+    const { redact } = await import('../lib/redact.mjs');
+    const r = redact([
+      'OPENAI_API_KEY=sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAA',
+      'gh = github_pat_11ABCDEFG0123456789012345678901234567890123456789012345',
+      'Authorization: Bearer abcdefghijklmnopqrstuvwx',
+      'svc=sk-svcacct-XXXXXXXXXXXXXXXXXXXXXXXXX',
+      'slack=xo_xb-1234567890-abcdefghijklmnop',
+    ].join('\n'));
+    assert.match(r, /\[REDACTED:openai-key\]/);
+    assert.match(r, /\[REDACTED:github-token\]/);
+    assert.match(r, /\[REDACTED:bearer\]/);
+    assert.match(r, /\[REDACTED:slack-token\]/);
+    assert.doesNotMatch(r, /sk-proj-AAAA/);
+    assert.doesNotMatch(r, /github_pat_11AB/);
+    assert.doesNotMatch(r, /xoxb-1234567890-/);
+  });
+
   test('appendSessionEvent writes JSONL with redacted payload + sha256', async () => {
     const { appendSessionEvent, readSessionEvents } = await import('../lib/session-log.mjs');
     const sid = `buddy-test-${Date.now()}`;
