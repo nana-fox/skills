@@ -59,7 +59,6 @@ Four-round Claude-Codex brainstorm (2026-03-31) established that buddy's differe
 - Brainstorm: 4 rounds of strategic direction exploration
 - Architecture review: Codex identified 6 blocking issues in initial spec, all resolved
 - Final verification: Codex approved spec with "可以开始实现"
-- Full discussion: discussions/2026-03-31-v3-direction-brainstorm.md
 - Spec: docs/superpowers/specs/2026-03-31-buddy-v3-verification-runtime-design.md
 
 ---
