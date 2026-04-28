@@ -15,8 +15,27 @@ if [ -x "$(command -v node)" ]; then
   preflight_result=$(node "${PLUGIN_ROOT}/scripts/buddy-runtime.mjs" --action preflight 2>/dev/null || echo '{"status":"error","message":"preflight failed"}')
 fi
 
-# Initialize audit log directory
-mkdir -p "${HOME}/.buddy"
+## Initialize audit log directory + rotate buddy session id (W1)
+## Read trigger source from stdin; skip rotation on compact to preserve event grouping.
+hook_input=""
+if [ ! -t 0 ]; then
+  hook_input=$(cat 2>/dev/null || true)
+fi
+trigger="$(printf '%s' "$hook_input" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+[ -z "$trigger" ] && trigger="startup"
+
+BUDDY_HOME_DIR="${BUDDY_HOME:-${HOME}/.buddy}"
+mkdir -p "$BUDDY_HOME_DIR"
+
+if [ "$trigger" != "compact" ] && [ -x "$(command -v node)" ]; then
+  node -e "
+    const fs = require('fs');
+    const crypto = require('crypto');
+    const sid = 'buddy-' + crypto.randomUUID().slice(0, 8);
+    fs.writeFileSync(process.argv[1] + '/buddy-session.json',
+      JSON.stringify({ buddy_session_id: sid, created_at: new Date().toISOString(), trigger: process.argv[2] }));
+  " "$BUDDY_HOME_DIR" "$trigger" 2>/dev/null || true
+fi
 
 # Escape string for JSON embedding
 escape_for_json() {
