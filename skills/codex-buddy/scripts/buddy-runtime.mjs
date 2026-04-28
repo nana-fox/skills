@@ -26,7 +26,9 @@ import {
   parseSessionId, parseSessionIdFromSessions, saveSession, loadSession,
   saveBuddySession, loadBuddySession,
   saveConversationSession, loadConversationSession,
+  trimPrompt,
 } from './lib/codex-adapter.mjs';
+import { runAppServerTurn } from './lib/codex-app-server.mjs';
 import { collectEvidence } from './lib/local-evidence.mjs';
 import { createEnvelope } from './lib/envelope.mjs';
 import { appendLog, getCallCount, annotateLastEntry } from './lib/audit.mjs';
@@ -221,28 +223,52 @@ async function actionProbe(args) {
   const ephemeral = isConversation ? false : (args.ephemeral !== 'false');
   const schemaFile = fs.existsSync(CODEX_OUTPUT_SCHEMA) ? CODEX_OUTPUT_SCHEMA : null;
 
-  const cmdSpec = resumedSessionId
-    ? buildResumeArgs({ sessionId: resumedSessionId, outputFile, prompt })
-    : buildProbeArgs({
-        projectDir: args['project-dir'],
-        outputFile,
-        prompt,
-        model: args.model || null,
-        ephemeral,
-        outputSchema: schemaFile,
-      });
+  // Phase A: BUDDY_USE_APP_SERVER=1 routes new probes through codex app-server
+  // (JSON-RPC, stdio, no broker yet). Resume still goes through `codex exec resume`.
+  const useAppServer = process.env.BUDDY_USE_APP_SERVER === '1' && !resumedSessionId;
+
+  const cmdSpec = useAppServer
+    ? null
+    : (resumedSessionId
+        ? buildResumeArgs({ sessionId: resumedSessionId, outputFile, prompt })
+        : buildProbeArgs({
+            projectDir: args['project-dir'],
+            outputFile,
+            prompt,
+            model: args.model || null,
+            ephemeral,
+            outputSchema: schemaFile,
+          }));
 
   try {
     const probeStartTime = startTime;
-    const execOutput = await execCodex(cmdSpec);
-    // Resume keeps the same session id; new non-ephemeral probes parse it from output.
-    // --output-schema suppresses stdout banner, so fall back to scanning ~/.codex/sessions
-    // for the most recent rollout file written since this probe started.
-    const codexSessionId = resumedSessionId
-      || (ephemeral
-            ? null
-            : (parseSessionId(execOutput)
-               || parseSessionIdFromSessions(Math.max(60_000, Date.now() - probeStartTime + 5000))));
+    let codexSessionId;
+    if (useAppServer) {
+      // app-server expects outputSchema as a parsed JSON object, not a file path.
+      const outputSchemaObj = schemaFile
+        ? (() => { try { return JSON.parse(fs.readFileSync(schemaFile, 'utf8')); } catch { return null; } })()
+        : null;
+      const r = await runAppServerTurn({
+        prompt: trimPrompt(prompt),
+        projectDir: args['project-dir'],
+        model: args.model || null,
+        outputSchema: outputSchemaObj,
+        ephemeral,
+      });
+      // Write finalMessage to outputFile so downstream parsing matches exec mode.
+      fs.writeFileSync(outputFile, r.finalMessage || '');
+      codexSessionId = r.threadId || null;
+    } else {
+      const execOutput = await execCodex(cmdSpec);
+      // Resume keeps the same session id; new non-ephemeral probes parse it from output.
+      // --output-schema suppresses stdout banner, so fall back to scanning ~/.codex/sessions
+      // for the most recent rollout file written since this probe started.
+      codexSessionId = resumedSessionId
+        || (ephemeral
+              ? null
+              : (parseSessionId(execOutput)
+                 || parseSessionIdFromSessions(Math.max(60_000, Date.now() - probeStartTime + 5000))));
+    }
     if (codexSessionId) {
       saveSession(codexSessionId);
       if (isConversation) saveConversationSession(buddySessionId, codexSessionId);
@@ -270,6 +296,7 @@ async function actionProbe(args) {
     appendSessionEvent(buddySessionId, verificationTaskId, 'probe.codex_output', {
       codex_session_id: codexSessionId,
       ephemeral,
+      runtime: useAppServer ? 'app-server' : 'exec',
       parse_mode: parsed.mode,
       verdict: parsed.data?.verdict || null,
       latency_ms: latencyMs,
@@ -290,6 +317,7 @@ async function actionProbe(args) {
       codex_session_id: codexSessionId,
       ephemeral,
       session_policy: sessionPolicy,
+      runtime: useAppServer ? 'app-server' : 'exec',
       resumed: !!resumedSessionId,
       followup_available: !ephemeral && !!codexSessionId,
       followup_recommended: followupRecommended,
