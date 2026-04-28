@@ -125,6 +125,8 @@ Codex 不保证遵守格式 → 提取不出结构时标 `unstructured`，整体
 Codex 改变了 Claude 的判断 → 记录改变了什么、为什么。
 Codex 没有新发现 → 写 `no-op`，不编造。
 
+**每次 probe 综合后必须标注：** `--action annotate --probe-found-new <true|false> --user-adopted <true|false>`（是否发现新问题 / 是否采纳建议）
+
 ---
 
 ## 升级 / 停止规则
