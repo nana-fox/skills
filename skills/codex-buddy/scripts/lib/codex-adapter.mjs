@@ -200,3 +200,26 @@ export function loadBuddySession() {
     return null;
   }
 }
+
+/**
+ * Save the codex_session_id bound to a buddy session for `conversation` policy.
+ * Subsequent conversation-mode probes resume this codex session.
+ */
+export function saveConversationSession(buddySessionId, codexSessionId) {
+  const dir = `${process.env.HOME}/.buddy`;
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    `${dir}/conv-${buddySessionId}.json`,
+    JSON.stringify({ codex_session_id: codexSessionId, updated: new Date().toISOString() }),
+  );
+}
+
+export function loadConversationSession(buddySessionId) {
+  const file = `${process.env.HOME}/.buddy/conv-${buddySessionId}.json`;
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')).codex_session_id || null;
+  } catch {
+    return null;
+  }
+}

@@ -2,7 +2,34 @@
 
 > **文档来源：** https://developers.openai.com/codex/cli — Codex CLI 会持续升级，参数和行为以官方文档为准。
 
-> **v3 Note:** 在 v3 中，`buddy-runtime.mjs` 自动生成和执行这些命令。Claude 应通过 `--action probe|local|followup|preflight` 调用 runtime，而非手搓命令。以下示例记录 runtime 内部行为，供理解和调试参考。
+> **v3 Note:** 在 v3 中，`buddy-runtime.mjs` 自动生成和执行这些命令。Claude 应通过 `--action probe|local|followup|preflight|annotate|metrics` 调用 runtime，而非手搓命令。以下示例记录 runtime 内部行为，供理解和调试参考。
+
+## buddy-runtime 调用速查
+
+```bash
+# Probe 默认 isolated（独立分析）
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action probe \
+  --evidence /tmp/buddy-evidence.txt --project-dir "$PWD"
+
+# Probe 多轮共享上下文（同一 verification task 内连续追问）
+# 第一次 probe 写入 codex_session_id；后续相同命令自动 resume
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action probe \
+  --evidence /tmp/buddy-evidence-step2.txt --project-dir "$PWD" \
+  --session-policy conversation
+
+# Follow-up（独立动作，与 conversation 互补）
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action followup \
+  --evidence /tmp/buddy-evidence-followup.txt --project-dir "$PWD"
+
+# Annotate（每次 probe 综合后必须）
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action annotate \
+  --probe-found-new true --user-adopted true
+```
+
+**Session Policy 选择：**
+- `isolated`（默认）— 每次 probe 独立，无上下文，不被前次结论污染
+- `conversation` — 同一 buddy session 内自动 resume，保留 Codex 上下文，省启动成本
+- 跨 verification task 不要用 conversation；单决策追问用 follow-up，多决策连续探索才用 conversation
 
 ## 常用参数速查
 

@@ -84,3 +84,21 @@ describe('buddy-runtime CLI', () => {
     fs.rmSync(tmpLog, { force: true });
   });
 });
+
+describe('session policy helpers', () => {
+  test('saveConversationSession + loadConversationSession round-trip', async () => {
+    const { saveConversationSession, loadConversationSession } = await import(
+      '../lib/codex-adapter.mjs'
+    );
+    const buddyId = `buddy-test-${Date.now()}`;
+    const codexId = '019dd1e8-3b2f-7ae3-befe-740d27a35d61';
+    saveConversationSession(buddyId, codexId);
+    assert.equal(loadConversationSession(buddyId), codexId);
+    fs.rmSync(`${process.env.HOME}/.buddy/conv-${buddyId}.json`, { force: true });
+  });
+
+  test('loadConversationSession returns null when no file exists', async () => {
+    const { loadConversationSession } = await import('../lib/codex-adapter.mjs');
+    assert.equal(loadConversationSession(`buddy-nonexistent-${Date.now()}`), null);
+  });
+});

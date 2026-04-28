@@ -25,6 +25,7 @@ import {
   checkCodexAvailable, buildProbeArgs, buildResumeArgs, execCodex,
   parseSessionId, saveSession, loadSession,
   saveBuddySession, loadBuddySession,
+  saveConversationSession, loadConversationSession,
 } from './lib/codex-adapter.mjs';
 import { collectEvidence } from './lib/local-evidence.mjs';
 import { createEnvelope } from './lib/envelope.mjs';
@@ -167,22 +168,36 @@ async function actionProbe(args) {
   const prompt = fs.readFileSync(evidenceFile, 'utf8');
   const outputFile = `/tmp/buddy-codex-${Date.now()}.txt`;
 
-  const ephemeral = args.ephemeral !== 'false'; // default true
+  // Session policy: isolated (default) | conversation
+  // conversation = persist codex_session_id across probes within one buddy session
+  const sessionPolicy = args['session-policy'] === 'conversation' ? 'conversation' : 'isolated';
+  const isConversation = sessionPolicy === 'conversation';
+  const resumedSessionId = isConversation ? loadConversationSession(buddySessionId) : null;
+
+  // ephemeral defaults: isolated → true; conversation → false (need persistent session)
+  // Legacy --ephemeral false still honored for backward compat in isolated mode.
+  const ephemeral = isConversation ? false : (args.ephemeral !== 'false');
   const schemaFile = fs.existsSync(CODEX_OUTPUT_SCHEMA) ? CODEX_OUTPUT_SCHEMA : null;
-  const cmdSpec = buildProbeArgs({
-    projectDir: args['project-dir'],
-    outputFile,
-    prompt,
-    model: args.model || null,
-    ephemeral,
-    outputSchema: schemaFile,
-  });
+
+  const cmdSpec = resumedSessionId
+    ? buildResumeArgs({ sessionId: resumedSessionId, outputFile, prompt })
+    : buildProbeArgs({
+        projectDir: args['project-dir'],
+        outputFile,
+        prompt,
+        model: args.model || null,
+        ephemeral,
+        outputSchema: schemaFile,
+      });
 
   try {
     const execOutput = await execCodex(cmdSpec);
-    const codexSessionId = ephemeral ? null : parseSessionId(execOutput);
+    // Resume keeps the same session id; new non-ephemeral probes parse it from output.
+    const codexSessionId = resumedSessionId
+      || (ephemeral ? null : parseSessionId(execOutput));
     if (codexSessionId) {
       saveSession(codexSessionId);
+      if (isConversation) saveConversationSession(buddySessionId, codexSessionId);
     } else if (ephemeral) {
       // Clear stale session so follow-up can't accidentally resume an old one
       saveSession('');
@@ -215,6 +230,8 @@ async function actionProbe(args) {
       session_id: buddySessionId,
       codex_session_id: codexSessionId,
       ephemeral,
+      session_policy: sessionPolicy,
+      resumed: !!resumedSessionId,
       followup_available: !ephemeral && !!codexSessionId,
       followup_recommended: followupRecommended,
       call_count: getCallCount(LOG_FILE, buddySessionId),
