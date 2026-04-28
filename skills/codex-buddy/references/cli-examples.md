@@ -50,6 +50,12 @@ node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action replay --session-id buddy-
 - 写入 session log 前才 redact；runtime 传给 codex 的 prompt **不脱敏**（脱敏是审计层，不影响推理质量）
 - `BUDDY_AUDIT_RAW=1`：写 raw payload 到 session log（仅本地调试用，回归后须 unset）
 
+**App-server 模式与 followup**（`BUDDY_USE_APP_SERVER=1` 时）：
+- Phase A 当前实现：app-server probe 拿到的 `threadId`（写入 session log 的 `codex_session_id`）尚未做端到端 e2e 跨协议 resume 验证
+- 期待：app-server 产生的 thread 在 ephemeral=false 时会落盘到 `~/.codex/sessions/.../rollout-*.jsonl`，与 exec 模式的 session 文件同形态，理论上 `codex exec resume <thread-id>` 应可接续
+- **未验证之前推荐做法**：app-server 模式下需要追问，使用 `--session-policy conversation`（probe 自身复用 thread/resume），不要直接换到 followup（避免 PHA→exec 不兼容的边缘情况）
+- Phase B（broker 长持）会把 thread/resume 直接走 app-server 协议，届时跨协议依赖可彻底消除
+
 **Heredoc 边界条件**（用 `cat <<'EOF' | runtime` 传 evidence 时）：
 - 若 evidence 内容里独立一行恰好就是 `EOF`，shell 会提前截断 → 用更长且不可能撞的标记，比如 `BUDDY_EVIDENCE_END`
 - 用 `<<'XXX'`（带引号）禁用 `$var`/backtick 展开，避免 evidence 里的 `$1`、反引号被 shell 解释
