@@ -50,6 +50,17 @@ function parseCodexOutput(text) {
   return { mode: 'unstructured', data: null };
 }
 
+// Detect whether Codex output contains open questions needing follow-up.
+function hasQuestions(parsed, rawText) {
+  if (parsed.mode === 'structured') {
+    return Array.isArray(parsed.data?.questions) && parsed.data.questions.length > 0;
+  }
+  // Unstructured: count question-mark lines that look like natural language questions.
+  const lines = rawText.split('\n');
+  const questionLines = lines.filter(l => /\?/.test(l) && /[a-zA-Z一-鿿]{4,}/.test(l));
+  return questionLines.length >= 2;
+}
+
 /**
  * Get or create a persistent buddy session ID for audit tracking.
  * Unlike Codex session IDs (per-probe), this persists across all calls
@@ -179,6 +190,7 @@ async function actionProbe(args) {
 
     const codexResult = fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : '';
     const parsed = parseCodexOutput(codexResult);
+    const followupRecommended = hasQuestions(parsed, codexResult);
 
     const envelope = createEnvelope({
       turn: parseInt(args.turn) || 0,
@@ -204,6 +216,7 @@ async function actionProbe(args) {
       codex_session_id: codexSessionId,
       ephemeral,
       followup_available: !ephemeral && !!codexSessionId,
+      followup_recommended: followupRecommended,
       call_count: getCallCount(LOG_FILE, buddySessionId),
       parse_mode: parsed.mode,
       structured: parsed.data,
