@@ -101,4 +101,24 @@ describe('session policy helpers', () => {
     const { loadConversationSession } = await import('../lib/codex-adapter.mjs');
     assert.equal(loadConversationSession(`buddy-nonexistent-${Date.now()}`), null);
   });
+
+  test('parseSessionIdFromSessions returns null with tiny window', async () => {
+    const { parseSessionIdFromSessions } = await import('../lib/codex-adapter.mjs');
+    assert.equal(parseSessionIdFromSessions(1), null);
+  });
+
+  test('parseSessionIdFromSessions extracts UUID from filename', async () => {
+    const { parseSessionIdFromSessions } = await import('../lib/codex-adapter.mjs');
+    const fakeUuid = '12345678-aaaa-bbbb-cccc-1234567890ab';
+    const baseDir = `${process.env.HOME}/.codex/sessions/2099/01/01`;
+    fs.mkdirSync(baseDir, { recursive: true });
+    const fullPath = `${baseDir}/rollout-2099-01-01T00-00-00-${fakeUuid}.jsonl`;
+    fs.writeFileSync(fullPath, '{}\n');
+    try {
+      assert.equal(parseSessionIdFromSessions(10_000), fakeUuid);
+    } finally {
+      fs.rmSync(fullPath, { force: true });
+      fs.rmSync(`${process.env.HOME}/.codex/sessions/2099`, { recursive: true, force: true });
+    }
+  });
 });

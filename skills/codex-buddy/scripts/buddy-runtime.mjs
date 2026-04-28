@@ -23,7 +23,7 @@
 
 import {
   checkCodexAvailable, buildProbeArgs, buildResumeArgs, execCodex,
-  parseSessionId, saveSession, loadSession,
+  parseSessionId, parseSessionIdFromSessions, saveSession, loadSession,
   saveBuddySession, loadBuddySession,
   saveConversationSession, loadConversationSession,
 } from './lib/codex-adapter.mjs';
@@ -191,10 +191,16 @@ async function actionProbe(args) {
       });
 
   try {
+    const probeStartTime = startTime;
     const execOutput = await execCodex(cmdSpec);
     // Resume keeps the same session id; new non-ephemeral probes parse it from output.
+    // --output-schema suppresses stdout banner, so fall back to scanning ~/.codex/sessions
+    // for the most recent rollout file written since this probe started.
     const codexSessionId = resumedSessionId
-      || (ephemeral ? null : parseSessionId(execOutput));
+      || (ephemeral
+            ? null
+            : (parseSessionId(execOutput)
+               || parseSessionIdFromSessions(Math.max(60_000, Date.now() - probeStartTime + 5000))));
     if (codexSessionId) {
       saveSession(codexSessionId);
       if (isConversation) saveConversationSession(buddySessionId, codexSessionId);

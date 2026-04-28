@@ -138,10 +138,50 @@ export function buildResumeCommand(opts) {
 /**
  * Extract session ID from codex exec output.
  * Looks for "session id: <uuid>" line.
+ * When --output-schema is enabled, codex suppresses the banner —
+ * use parseSessionIdFromSessions() as a fallback in that case.
  */
 export function parseSessionId(output) {
   const match = output.match(/session\s+id:\s+([0-9a-f-]+)/i);
   return match ? match[1] : null;
+}
+
+/**
+ * Fallback: locate the most recent codex session rollout file by mtime
+ * and extract the session UUID from its filename.
+ * Filename pattern: rollout-YYYY-MM-DDTHH-MM-SS-<UUID>.jsonl
+ * Used when stdout banner is suppressed (e.g., with --output-schema).
+ */
+export function parseSessionIdFromSessions(sinceMs = 60_000) {
+  const baseDir = `${process.env.HOME}/.codex/sessions`;
+  if (!fs.existsSync(baseDir)) return null;
+  const cutoff = Date.now() - sinceMs;
+  const uuidRe = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+
+  const candidates = [];
+  for (const year of safeReaddir(baseDir)) {
+    for (const month of safeReaddir(`${baseDir}/${year}`)) {
+      for (const day of safeReaddir(`${baseDir}/${year}/${month}`)) {
+        const dayDir = `${baseDir}/${year}/${month}/${day}`;
+        for (const f of safeReaddir(dayDir)) {
+          if (!f.startsWith('rollout-') || !f.endsWith('.jsonl')) continue;
+          const full = `${dayDir}/${f}`;
+          try {
+            const stat = fs.statSync(full);
+            if (stat.mtimeMs >= cutoff) candidates.push({ mtime: stat.mtimeMs, name: f });
+          } catch {}
+        }
+      }
+    }
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  const m = candidates[0].name.match(uuidRe);
+  return m ? m[1] : null;
+}
+
+function safeReaddir(dir) {
+  try { return fs.readdirSync(dir); } catch { return []; }
 }
 
 /**
