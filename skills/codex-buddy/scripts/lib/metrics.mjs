@@ -2,26 +2,64 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getBuddyHome } from './paths.mjs';
+import { readSessionEvents } from './session-log.mjs';
 
 function defaultLog() { return path.join(getBuddyHome(), 'logs.jsonl'); }
 
-export function getStats(logFile = defaultLog(), sessionId = null) {
+// Schema v2 uses buddy_session_id; legacy entries use session_id.
+function entrySessionId(e) { return e.buddy_session_id ?? e.session_id; }
+
+// Resolve action for legacy entries written before P0 added the action field.
+function resolveAction(e) {
+  if (e.action) return e.action;
+  if (e.route === 'local') return 'local';
+  if (e.route === 'codex') return 'probe';
+  return null;
+}
+
+// For schema v2 entries, annotation lives in the session-log as an 'annotate'
+// event keyed by (buddy_session_id, verification_task_id). Cache per session
+// to avoid re-reading the file for every entry.
+function buildAnnotationLookup(entries) {
+  const sessionIds = new Set(entries.map(entrySessionId).filter(Boolean));
+  const byTaskId = new Map();
+  for (const sid of sessionIds) {
+    let events = [];
+    try { events = readSessionEvents(sid); } catch { continue; }
+    for (const e of events) {
+      if (e.event !== 'annotate') continue;
+      if (!e.verification_task_id) continue;
+      // Last annotate wins (annotation may be re-issued).
+      byTaskId.set(`${sid}::${e.verification_task_id}`, e);
+    }
+  }
+  return byTaskId;
+}
+
+// Resolve an annotation field for an entry, preferring session-log when available.
+function resolveAnnotation(entry, annotationLookup, field) {
+  const sid = entrySessionId(entry);
+  if (sid && entry.verification_task_id) {
+    const event = annotationLookup.get(`${sid}::${entry.verification_task_id}`);
+    if (event && event[field] !== undefined) return event[field];
+  }
+  // Legacy entries had annotation mutated in-place on the log entry itself.
+  if (entry[field] !== undefined) return entry[field];
+  return undefined;
+}
+
+export function getStats(logFile = defaultLog(), buddySessionId = null) {
   if (!fs.existsSync(logFile)) {
     return { total: 0, probes: 0, followups: 0, locals: 0, avg_latency_ms: null,
              probe_found_new_rate: null, user_adopted_rate: null, followup_triggered_rate: null };
   }
 
   const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n').filter(Boolean);
-  const entries = lines.map(l => JSON.parse(l))
-    .filter(e => !sessionId || e.session_id === sessionId);
+  const entries = lines.map(l => {
+    try { return JSON.parse(l); } catch { return null; }
+  }).filter(Boolean).filter(e => !buddySessionId || entrySessionId(e) === buddySessionId);
 
-  // Infer action from route for legacy entries written before P0 added the action field.
-  function resolveAction(e) {
-    if (e.action) return e.action;
-    if (e.route === 'local') return 'local';
-    if (e.route === 'codex') return 'probe'; // pre-P0 codex calls were all probes
-    return null;
-  }
+  const annotationLookup = buildAnnotationLookup(entries);
 
   const probes    = entries.filter(e => resolveAction(e) === 'probe');
   const followups = entries.filter(e => resolveAction(e) === 'followup');
@@ -33,9 +71,10 @@ export function getStats(logFile = defaultLog(), sessionId = null) {
     : null;
 
   function rate(subset, field) {
-    const annotated = subset.filter(e => e[field] !== undefined);
+    const annotated = subset.map(e => resolveAnnotation(e, annotationLookup, field))
+                            .filter(v => v !== undefined);
     if (!annotated.length) return null;
-    return Math.round(annotated.filter(e => e[field] === true).length / annotated.length * 100);
+    return Math.round(annotated.filter(v => v === true).length / annotated.length * 100);
   }
 
   return {
@@ -44,8 +83,8 @@ export function getStats(logFile = defaultLog(), sessionId = null) {
     followups: followups.length,
     locals: locals.length,
     avg_latency_ms,
-    probe_found_new_rate: rate(probes, 'probe_found_new'),   // % probes where Codex found something new
-    user_adopted_rate:    rate(probes, 'user_adopted'),       // % probes where user adopted suggestion
+    probe_found_new_rate: rate(probes, 'probe_found_new'),
+    user_adopted_rate:    rate(probes, 'user_adopted'),
     followup_triggered_rate: probes.length
       ? Math.round(followups.length / probes.length * 100)
       : null,

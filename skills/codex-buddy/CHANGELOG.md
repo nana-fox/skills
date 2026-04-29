@@ -4,6 +4,24 @@
 
 ---
 
+## Stage 5b — 2026-04-29 Audit/decision-stream schema v2
+
+### Content
+- **Schema unification (audit.mjs:appendLog)**: rename `session_id` → `buddy_session_id`, `timestamp` → `ts`, add `verification_task_id` and `schema_version: 2`. Now joinable with session-log events on the same keys.
+- **Remove dangerous mutation (audit.mjs:annotateLastEntry)**: the function read the entire log, located the last matching entry, and rewrote the whole file. This broke JSONL append-only semantics, slowed down with file growth, and could lose data under concurrent writes. Annotation now only appends an `annotate` event to `~/.buddy/sessions/<sid>.jsonl` — append-only, idempotent, race-safe.
+- **metrics.mjs cross-stream join**: reads decisions stream, joins to session-log annotate events by `(buddy_session_id, verification_task_id)`. Falls back to legacy in-place mutated fields for pre-v2 entries. Backward compatible with the existing 421KB of historical data.
+- **buddy-runtime.mjs**: passes `verification_task_id` at all 3 `appendLog` call sites (local/probe/followup). Local actions get a synthesized id via `newVerificationTaskId()` for join uniformity.
+- **Tests**: audit.test.mjs +2 tests (schema v2 fields, legacy fallback). 80/80 pass.
+
+### Codex Interaction
+- Probe (after 3 retries due to upstream `chatgpt.com/backend-api` TLS failures): asked Codex to judge dual-stream logging design with no Claude-side leading.
+- Codex `verdict: caution`, 6 high-confidence findings.
+- Critical finding Claude missed: `annotateLastEntry` is the most dangerous code in the data layer (read-modify-rewrite breaks JSONL append-only). This drove the `annotate` rewrite.
+- Codex suggested: prioritize unifying schema + adding cross-stream key (`verification_task_id`) over physically merging files. Done.
+- Skipped per Codex suggestion: file rename `logs.jsonl` → `decisions.jsonl` — risk vs benefit on existing data not justified at this stage.
+
+---
+
 ## v3.0.2 — 2026-04-01 Protocol Communication Performance
 
 ### Content

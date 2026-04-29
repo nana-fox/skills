@@ -62,7 +62,7 @@ Gate 触发后：先 **local evidence**（grep/test/lint）→ 不够再 **Codex
 `echo "$evidence" | node ".../buddy-runtime.mjs" --action probe --evidence-stdin --project-dir "$PWD"`
 也支持 `--evidence <file>` 兼容形式。runtime 自动把每次交互写入 `~/.buddy/sessions/<sid>.jsonl`（事件流：probe.start / codex_output / annotate / synthesis；payload 默认 redacted，sha256+bytes 可校验；`BUDDY_AUDIT_RAW=1` 写 raw）。
 
-**Session Policy（probe）：** 默认 `isolated`（独立分析，无上下文共享）。同一 verification task 内连续多次需要追问 → `--session-policy conversation`（自动 resume，省启动）。conversation 必须显式 opt-in，避免污染独立分析。
+**两层复用机制（不要混淆）：** ① `--session-policy isolated|conversation` 控 exec runtime 的 session resume，默认 `isolated`，追问加 `conversation`（仅 exec 生效）；② `--fresh-thread` 控 broker runtime 的持久 thread，**跨主题必传**否则 thread 残留记忆污染独立分析。
 
 probe 同决策最多 2 次（probe + follow-up）。耗时 30-80s，**必须 `run_in_background`**。
 

@@ -37,7 +37,7 @@ import {
 import { checkTopicDrift } from './lib/topic-drift.mjs';
 import { collectEvidence } from './lib/local-evidence.mjs';
 import { createEnvelope } from './lib/envelope.mjs';
-import { appendLog, getCallCount, annotateLastEntry } from './lib/audit.mjs';
+import { appendLog, getCallCount } from './lib/audit.mjs';
 import { getStats } from './lib/metrics.mjs';
 import { appendSessionEvent, readSessionEvents, newVerificationTaskId } from './lib/session-log.mjs';
 import { getBuddyHome } from './lib/paths.mjs';
@@ -178,7 +178,11 @@ async function actionLocal(args) {
   });
 
   const latencyMs = Date.now() - startTime;
-  appendLog(logFilePath(), envelope, buddySessionId, args['project-dir'], latencyMs, { action: 'local' });
+  const localTaskId = newVerificationTaskId();
+  appendLog(logFilePath(), envelope, buddySessionId, args['project-dir'], latencyMs, {
+    action: 'local',
+    verification_task_id: localTaskId,
+  });
 
   output({
     status: result.ok ? 'verified' : 'blocked',
@@ -365,7 +369,10 @@ async function actionProbe(args) {
     });
 
     const latencyMs = Date.now() - startTime;
-    appendLog(logFilePath(), envelope, buddySessionId, args['project-dir'], latencyMs, { action: 'probe' });
+    appendLog(logFilePath(), envelope, buddySessionId, args['project-dir'], latencyMs, {
+      action: 'probe',
+      verification_task_id: verificationTaskId,
+    });
 
     appendSessionEvent(buddySessionId, verificationTaskId, 'probe.codex_output', {
       codex_session_id: codexSessionId,
@@ -492,7 +499,10 @@ async function actionFollowup(args) {
     });
 
     const latencyMs = Date.now() - startTime;
-    appendLog(logFilePath(), envelope, buddySessionId, args['project-dir'], latencyMs, { action: 'followup' });
+    appendLog(logFilePath(), envelope, buddySessionId, args['project-dir'], latencyMs, {
+      action: 'followup',
+      verification_task_id: verificationTaskId,
+    });
 
     appendSessionEvent(buddySessionId, verificationTaskId, 'followup.codex_output', {
       codex_session_id: codexSessionId,
@@ -539,25 +549,28 @@ async function actionAnnotate(args) {
     output({ status: 'error', message: 'No fields to annotate. Use --probe-found-new and/or --user-adopted.' });
     return;
   }
-  const ok = annotateLastEntry(logFilePath(), buddySessionId, fields);
-  if (ok) {
-    // Default verification_task_id: pick the latest probe.codex_output / followup.codex_output
-    // from this buddy session's log, so annotate is properly linked to the probe it annotates.
-    let taskId = args['verification-task-id'];
-    if (!taskId) {
-      const events = readSessionEvents(buddySessionId);
-      for (let i = events.length - 1; i >= 0; i--) {
-        const e = events[i];
-        if (e.event === 'probe.codex_output' || e.event === 'followup.codex_output') {
-          taskId = e.verification_task_id;
-          break;
-        }
+  // Annotation is recorded in the session-log event stream (append-only).
+  // We default verification_task_id to the latest probe/followup output for this
+  // buddy session so the annotate event is properly linked to the probe it annotates.
+  let taskId = args['verification-task-id'];
+  if (!taskId) {
+    const events = readSessionEvents(buddySessionId);
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if (e.event === 'probe.codex_output' || e.event === 'followup.codex_output') {
+        taskId = e.verification_task_id;
+        break;
       }
     }
-    appendSessionEvent(buddySessionId, taskId || 'unknown', 'annotate', fields);
   }
-  output({ status: ok ? 'ok' : 'error', session_id: buddySessionId, annotated: fields,
-           message: ok ? 'Annotated last entry' : 'No log entry found for session' });
+  if (!taskId) {
+    output({ status: 'error', session_id: buddySessionId,
+             message: 'No probe/followup found for this buddy session — nothing to annotate.' });
+    return;
+  }
+  appendSessionEvent(buddySessionId, taskId, 'annotate', fields);
+  output({ status: 'ok', session_id: buddySessionId, verification_task_id: taskId,
+           annotated: fields, message: 'Annotated session-log probe' });
 }
 
 // Allow Claude to log synthesis (or any post-hoc note) into the buddy session log.

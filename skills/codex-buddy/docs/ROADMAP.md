@@ -61,14 +61,18 @@ Stage 5 所有代码层工作已完成。合 main 前需：
 2. 运行 `node scripts/buddy-bench.mjs --mode broker-startup-delta`（需有 broker session 数据）
 3. 用户点头
 
-## 下一 session 起点（2026-04-29）
+## Stage 5b — 2026-04-29 audit schema v2 ✅
 
-**Plan 文件：** `docs/codex-buddy-stage5-broker.md`（已 commit 到 tracked 位置）
+经 Codex probe 重新校准（原 P0 描述"字段全为空"不准确，实际是命名分歧+annotate 破坏 append-only）：
 
-**优先级 P0 — telemetry fix（~30min）：**
-- 修 `audit.mjs:appendLog` 写入 `ts` + `buddy_session_id`（两个字段当前全为空）
-- 影响：logs.jsonl 所有历史数据无法按 session 归因，bench 无法时序分析
-- 加一条 test（audit.test.mjs 验证这两个字段存在且非空）
+- ✅ audit.mjs:appendLog 写 `ts` / `buddy_session_id` / `verification_task_id` / `schema_version: 2`
+- ✅ 移除 `annotateLastEntry`（破坏 JSONL append-only 的 read-modify-rewrite）
+- ✅ 三个 appendLog 调用点都带上 `verification_task_id`
+- ✅ metrics.mjs 跨流 join：从 session-log 读 annotate 事件，legacy 数据 fallback 到入口 mutated 字段
+- ✅ 80/80 tests, verify-repo PASSED, smoke test passed
+- 跳过：`logs.jsonl` → `decisions.jsonl` 重命名（风险大于收益，保留旧文件名）
+
+## 下一 session 起点（待续）
 
 **优先级 P1 — SKILL.md Session Policy 澄清（~15min）：**
 - Session Policy（`--session-policy isolated|conversation`）是 codex exec 的 session resume 策略
