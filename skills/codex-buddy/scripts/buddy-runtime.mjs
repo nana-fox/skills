@@ -230,14 +230,14 @@ async function actionProbe(args) {
   const ephemeral = isConversation ? false : (args.ephemeral !== 'false');
   const schemaFile = fs.existsSync(CODEX_OUTPUT_SCHEMA) ? CODEX_OUTPUT_SCHEMA : null;
 
-  // Runtime selection:
-  //   BUDDY_USE_BROKER=1        → broker (W8 long-lived codex app-server, persistent thread)
-  //   BUDDY_USE_LEGACY_EXEC=1   → force exec path even if BUDDY_USE_BROKER=1 (emergency fallback)
-  //   BUDDY_USE_APP_SERVER=1    → spawn-per-call codex app-server (Stage 3-A)
-  //   default                   → codex exec (legacy)
+  // Runtime selection (W11 default flip — broker is now the default):
+  //   default                   → broker (W8 long-lived codex app-server, persistent thread)
+  //   BUDDY_USE_LEGACY_EXEC=1   → force exec path (emergency fallback when broker has issues)
+  //   BUDDY_USE_APP_SERVER=1    → spawn-per-call codex app-server (Stage 3-A, opt-in)
+  //   BUDDY_USE_BROKER=0        → same as BUDDY_USE_LEGACY_EXEC=1, explicit opt-out
   // Resume always goes through `codex exec resume` (broker and exec are separate namespaces).
-  const useBroker = process.env.BUDDY_USE_BROKER === '1'
-    && process.env.BUDDY_USE_LEGACY_EXEC !== '1'
+  const useBroker = process.env.BUDDY_USE_LEGACY_EXEC !== '1'
+    && process.env.BUDDY_USE_BROKER !== '0'
     && !resumedSessionId;
   const useAppServer = !useBroker && process.env.BUDDY_USE_APP_SERVER === '1' && !resumedSessionId;
 

@@ -195,7 +195,8 @@ describe('CLI: stdin evidence + replay + log-synthesis', () => {
         'node',
         [RUNTIME, '--action', 'probe', '--evidence', evidence, '--project-dir', '/tmp'],
         { encoding: 'utf8', timeout: 15000,
-          env: { ...process.env, BUDDY_STUB_CODEX: '1', BUDDY_HOME: tmpHome } }
+          // BUDDY_USE_LEGACY_EXEC=1: broker is now default; force exec path for this test.
+          env: { ...process.env, BUDDY_STUB_CODEX: '1', BUDDY_HOME: tmpHome, BUDDY_USE_LEGACY_EXEC: '1' } }
       );
       stdout = r.stdout || ''; stderr = r.stderr || '';
     } finally {
