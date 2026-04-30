@@ -41,11 +41,28 @@ if [ "$trigger" != "compact" ] && [ -x "$(command -v node)" ]; then
     const cwd = process.argv[3];
     const sid = 'buddy-' + crypto.randomUUID().slice(0, 8);
     const updated = new Date().toISOString();
-    const cwdHash = crypto.createHash('sha256').update(cwd).digest('hex').slice(0, 8);
-    // Primary: per-cwd state.
-    const perCwd = path.join(home, 'state', 'by-cwd', cwdHash + '.json');
-    fs.writeFileSync(perCwd, JSON.stringify({ buddy_session_id: sid, cwd, updated, trigger }));
-    // Compat: legacy global pointer (older runtimes / tools still see it).
+    // Official-pattern primary (stage6a): git root + realpathSync + slug-hash16.
+    function resolveWorkspaceRoot(p) {
+      try { return require('child_process').execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: p, encoding: 'utf8', stdio: ['ignore','pipe','ignore'] }).trim(); }
+      catch { return path.resolve(p); }
+    }
+    let canonicalRoot = cwd;
+    try { canonicalRoot = fs.realpathSync(resolveWorkspaceRoot(cwd)); } catch { canonicalRoot = resolveWorkspaceRoot(cwd); }
+    const slug = (path.basename(canonicalRoot) || 'workspace').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
+    const hash16 = crypto.createHash('sha256').update(canonicalRoot).digest('hex').slice(0, 16);
+    const pluginData = process.env.CLAUDE_PLUGIN_DATA;
+    const stateRoot = pluginData ? path.join(pluginData, 'state') : path.join(home, 'state');
+    const stateDir = path.join(stateRoot, slug + '-' + hash16);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'buddy-session.json'),
+      JSON.stringify({ buddy_session_id: sid, cwd, updated, trigger }));
+    // Legacy stage5e: by-cwd/<hash8> (back-compat for loadBuddySession stage5e fallback).
+    const cwdHash8 = crypto.createHash('sha256').update(cwd).digest('hex').slice(0, 8);
+    const legacyCwdDir = path.join(home, 'state', 'by-cwd');
+    fs.mkdirSync(legacyCwdDir, { recursive: true });
+    fs.writeFileSync(path.join(legacyCwdDir, cwdHash8 + '.json'),
+      JSON.stringify({ buddy_session_id: sid, cwd, updated, trigger }));
+    // Global legacy pointer (oldest back-compat).
     fs.writeFileSync(path.join(home, 'buddy-session.json'),
       JSON.stringify({ buddy_session_id: sid, created_at: updated, trigger }));
   " "$BUDDY_HOME_DIR" "$trigger" "$hook_cwd" 2>/dev/null || true
