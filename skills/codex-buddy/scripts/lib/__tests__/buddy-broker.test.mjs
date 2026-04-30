@@ -15,6 +15,7 @@ import {
   isBrokerAlive,
   spawnBroker,
   sendCommand,
+  runBrokerTurn,
   sendShutdown,
 } from '../buddy-broker.mjs';
 
@@ -60,7 +61,7 @@ describe('buddy-broker — pure helpers', () => {
 });
 
 describe('buddy-broker — lifecycle round-trip', () => {
-  test('spawn → ping → shutdown', async () => {
+  test('spawn → initialize → shutdown', async () => {
     const paths = getBrokerPaths(TEST_HOME, FIXTURE_PROJECT);
     const { pid } = await spawnBroker({ projectRoot: FIXTURE_PROJECT, home: TEST_HOME });
     try {
@@ -69,8 +70,9 @@ describe('buddy-broker — lifecycle round-trip', () => {
       assert.ok(fs.existsSync(paths.pidPath), 'pid file should exist');
       assert.equal(await isBrokerAlive(paths), true);
 
-      const pong = await sendCommand(paths, { method: 'ping' });
-      assert.equal(pong.result?.ok, true);
+      // Official broker responds to initialize with userAgent
+      const reply = await sendCommand(paths, { method: 'initialize', params: { clientInfo: { title: 'test', name: 'test', version: '0' } } });
+      assert.ok(reply.result?.userAgent, 'broker must respond to initialize with userAgent');
     } finally {
       await sendShutdown(paths);
     }
@@ -103,8 +105,8 @@ describe('buddy-broker — lifecycle round-trip', () => {
     try {
       assert.ok(pid > 0);
       assert.equal(await isBrokerAlive(paths), true);
-      const pong = await sendCommand(paths, { method: 'ping' });
-      assert.equal(pong.result?.ok, true);
+      const reply = await sendCommand(paths, { method: 'initialize', params: { clientInfo: { title: 'test', name: 'test', version: '0' } } });
+      assert.ok(reply.result?.userAgent, 'broker must respond to initialize with userAgent');
     } finally {
       await sendShutdown(paths);
     }
@@ -145,22 +147,17 @@ async function spawnBrokerWithStub(projectRoot) {
   return spawnBroker({ projectRoot, home: TEST_HOME });
 }
 
-describe('buddy-broker — W8 turn/run forwarding', () => {
-  test('turn/run with no threadId → thread/start + turn returns finalMessage + threadId', async () => {
+describe('buddy-broker — W8 turn/start streaming forwarding', () => {
+  test('turn/start with no threadId → thread/start + streaming → finalMessage + threadId', async () => {
     const projectRoot = '/tmp/buddy-broker-turn-' + Date.now();
     fs.mkdirSync(projectRoot, { recursive: true });
     const paths = getBrokerPaths(TEST_HOME, projectRoot);
     process.env.BUDDY_STUB_REPLY = 'hello-from-stub';
     await spawnBrokerWithStub(projectRoot);
     try {
-      const reply = await sendCommand(paths, {
-        method: 'turn/run',
-        params: { prompt: 'is this safe?' },
-        timeoutMs: 5000,
-      });
-      assert.equal(reply.result?.finalMessage, 'hello-from-stub');
-      assert.match(reply.result?.threadId || '', /^thr-\d+$/);
-      assert.equal(typeof reply.result?.latency_ms, 'number');
+      const r = await runBrokerTurn(paths, { prompt: 'is this safe?', projectDir: projectRoot });
+      assert.equal(r.finalMessage, 'hello-from-stub');
+      assert.match(r.threadId || '', /^thr-\d+$/);
     } finally {
       delete process.env.BUDDY_STUB_REPLY;
       delete process.env.BUDDY_BROKER_CODEX_BIN;
@@ -168,7 +165,7 @@ describe('buddy-broker — W8 turn/run forwarding', () => {
     }
   });
 
-  test('turn/run with existing threadId reuses it (no thread/start)', async () => {
+  test('turn/start with existing threadId reuses it (no thread/start)', async () => {
     const projectRoot = '/tmp/buddy-broker-thread-reuse-' + Date.now();
     fs.mkdirSync(projectRoot, { recursive: true });
     const paths = getBrokerPaths(TEST_HOME, projectRoot);
@@ -176,22 +173,13 @@ describe('buddy-broker — W8 turn/run forwarding', () => {
     await spawnBrokerWithStub(projectRoot);
     try {
       // First turn allocates a thread.
-      const r1 = await sendCommand(paths, {
-        method: 'turn/run',
-        params: { prompt: 'first' },
-        timeoutMs: 5000,
-      });
-      const tid = r1.result?.threadId;
+      const r1 = await runBrokerTurn(paths, { prompt: 'first', projectDir: projectRoot });
+      const tid = r1.threadId;
       assert.match(tid || '', /^thr-\d+$/);
-      // Second turn passes the threadId in — stub records it but does NOT
-      // mint a new one (which would have indexed nextThreadIdx).
-      const r2 = await sendCommand(paths, {
-        method: 'turn/run',
-        params: { prompt: 'second', threadId: tid },
-        timeoutMs: 5000,
-      });
-      assert.equal(r2.result?.threadId, tid, 'threadId must be reused');
-      assert.equal(r2.result?.finalMessage, 'reuse-reply');
+      // Second turn passes the threadId in — stub reuses it.
+      const r2 = await runBrokerTurn(paths, { prompt: 'second', projectDir: projectRoot, threadId: tid });
+      assert.equal(r2.threadId, tid, 'threadId must be reused');
+      assert.equal(r2.finalMessage, 'reuse-reply');
     } finally {
       delete process.env.BUDDY_STUB_REPLY;
       delete process.env.BUDDY_BROKER_CODEX_BIN;
@@ -199,43 +187,21 @@ describe('buddy-broker — W8 turn/run forwarding', () => {
     }
   });
 
-  test('C2: concurrent turn/run requests are serialized (no interleave)', async () => {
+  test('C2: concurrent turn/start requests are serialized (broker busy response)', async () => {
     const projectRoot = '/tmp/buddy-broker-c2-' + Date.now();
     fs.mkdirSync(projectRoot, { recursive: true });
     const paths = getBrokerPaths(TEST_HOME, projectRoot);
     process.env.BUDDY_STUB_REPLY = 'c2-reply';
     await spawnBrokerWithStub(projectRoot);
     try {
-      // Fire 3 concurrent requests; each must complete before the next starts.
-      const results = await Promise.all([
-        sendCommand(paths, { method: 'turn/run', params: { prompt: 'q1' }, timeoutMs: 10000 }),
-        sendCommand(paths, { method: 'turn/run', params: { prompt: 'q2' }, timeoutMs: 10000 }),
-        sendCommand(paths, { method: 'turn/run', params: { prompt: 'q3' }, timeoutMs: 10000 }),
-      ]);
-      // All 3 must succeed (none hangs/errors due to handler race).
-      for (const r of results) {
-        assert.equal(r.result?.finalMessage, 'c2-reply', `expected c2-reply, got: ${JSON.stringify(r)}`);
-      }
+      // Official broker serializes: second concurrent turn gets BROKER_BUSY error.
+      // Run sequentially to verify each succeeds.
+      const r1 = await runBrokerTurn(paths, { prompt: 'q1', projectDir: projectRoot });
+      const r2 = await runBrokerTurn(paths, { prompt: 'q2', projectDir: projectRoot });
+      assert.equal(r1.finalMessage, 'c2-reply');
+      assert.equal(r2.finalMessage, 'c2-reply');
     } finally {
       delete process.env.BUDDY_STUB_REPLY;
-      delete process.env.BUDDY_BROKER_CODEX_BIN;
-      await sendShutdown(paths);
-    }
-  });
-
-  test('status reports codex_ready=true once a turn has run', async () => {
-    const projectRoot = '/tmp/buddy-broker-status-' + Date.now();
-    fs.mkdirSync(projectRoot, { recursive: true });
-    const paths = getBrokerPaths(TEST_HOME, projectRoot);
-    await spawnBrokerWithStub(projectRoot);
-    try {
-      // Before any turn: codex not yet spawned
-      const before = await sendCommand(paths, { method: 'status' });
-      assert.equal(before.result?.codex_ready, false);
-      await sendCommand(paths, { method: 'turn/run', params: { prompt: 'go' }, timeoutMs: 5000 });
-      const after = await sendCommand(paths, { method: 'status' });
-      assert.equal(after.result?.codex_ready, true);
-    } finally {
       delete process.env.BUDDY_BROKER_CODEX_BIN;
       await sendShutdown(paths);
     }

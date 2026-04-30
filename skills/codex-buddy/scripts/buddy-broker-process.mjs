@@ -1,360 +1,261 @@
 #!/usr/bin/env node
-/**
- * buddy-broker-process.mjs — W7 broker daemon.
- *
- * Entry: spawned detached by lib/buddy-broker.mjs#spawnBroker. Reads target
- * paths from env (BUDDY_BROKER_SOCK, BUDDY_BROKER_PID, BUDDY_BROKER_PROJECT_ROOT).
- * Listens on a Unix domain socket; accepts line-delimited JSON-RPC.
- *
- * Methods (W7):
- *   ping          → { ok: true, pid, started_at, project_root }
- *   status        → same as ping plus uptime_ms
- *   shutdown      → { ok: true }, then closes server and exits cleanly
- *
- * Codex app-server forwarding (turn/start, thread/*) is W8.
- *
- * Lifecycle invariants:
- *   - PID file is written before listen() resolves; removed on graceful exit.
- *   - Socket file is unlinked on graceful exit and on SIGTERM.
- *   - Idle timeout: if no client connects within IDLE_TIMEOUT_MS, the broker
- *     exits to avoid orphans when a Claude session ends without firing the
- *     session-end hook.
- */
-import fs from 'node:fs';
-import net from 'node:net';
-import path from 'node:path';
-import { JsonRpcClient, spawnAppServer } from './lib/codex-app-server.mjs';
 
-const SERVICE_NAME = 'codex-buddy-broker';
-const TURN_TIMEOUT_MS = 10 * 60 * 1000;
+import fs from "node:fs";
+import net from "node:net";
+import path from "node:path";
+import process from "node:process";
 
-const SOCK = process.env.BUDDY_BROKER_SOCK;
-const PID_PATH = process.env.BUDDY_BROKER_PID;
-const PROJECT_ROOT = process.env.BUDDY_BROKER_PROJECT_ROOT || process.cwd();
-const IDLE_TIMEOUT_MS = Number.parseInt(process.env.BUDDY_BROKER_IDLE_MS || '', 10) || 60 * 60 * 1000; // 1h
-const STARTED_AT = Date.now();
+import { parseArgs } from "./lib/args.mjs";
+import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "./lib/app-server.mjs";
+import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
 
-if (!SOCK || !PID_PATH) {
-  process.stderr.write('[buddy-broker] missing BUDDY_BROKER_SOCK or BUDDY_BROKER_PID env\n');
-  process.exit(2);
-}
+const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);
 
-let server;
-let shuttingDown = false;
-let idleTimer;
-
-function log(msg) {
-  // stdout/stderr are already redirected to broker-<hash>.log by the parent.
-  process.stdout.write(`[buddy-broker ${new Date().toISOString()}] ${msg}\n`);
-}
-
-function cleanupFiles() {
-  try { fs.unlinkSync(SOCK); } catch {}
-  try { fs.unlinkSync(PID_PATH); } catch {}
-}
-
-function gracefulExit(code = 0) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  if (idleTimer) clearTimeout(idleTimer);
-  if (server) {
-    try { server.close(); } catch {}
+function buildStreamThreadIds(method, params, result) {
+  const threadIds = new Set();
+  if (params?.threadId) {
+    threadIds.add(params.threadId);
   }
-  // Tear down the long-lived codex app-server child if any.
-  if (codexClient) { try { codexClient.close(); } catch {} }
-  if (codexProc) { try { codexProc.kill('SIGTERM'); } catch {} }
-  cleanupFiles();
-  // Give in-flight writes a tick to drain.
-  setTimeout(() => process.exit(code), 50);
-}
-
-function resetIdleTimer() {
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    log(`idle timeout (${IDLE_TIMEOUT_MS}ms) reached — exiting`);
-    gracefulExit(0);
-  }, IDLE_TIMEOUT_MS);
-  // Don't keep the event loop alive solely for the idle timer.
-  if (typeof idleTimer.unref === 'function') idleTimer.unref();
-}
-
-// W8: long-lived codex app-server. Spawn-once per broker; subsequent turns
-// reuse the JsonRpcClient. This is what makes broker mode worth the
-// orchestration cost (saves the 5-10s codex startup per probe).
-let codexProc = null;
-let codexClient = null;
-let codexInitPromise = null;
-
-// C2 fix: codex app-server handles one turn at a time; concurrent turn/run
-// requests from multiple broker clients must be queued.
-let turnQueue = Promise.resolve();
-
-async function ensureCodexClient() {
-  if (codexClient && !codexClient.closed) return codexClient;
-  if (codexInitPromise) return codexInitPromise;
-  codexInitPromise = (async () => {
-    log('spawning codex app-server (lazy first-turn)');
-    const proc = spawnAppServer(PROJECT_ROOT);
-    const client = new JsonRpcClient(proc);
-    // C5 fix: guard exit listener by object identity so a stale proc's exit
-    // doesn't null out a freshly-spawned client.
-    proc.on('exit', (code) => {
-      if (codexProc !== proc) return; // stale — ignore
-      log(`codex app-server exited (code=${code})`);
-      codexClient = null;
-      codexProc = null;
-    });
-    try {
-      await client.request('initialize', {
-        clientInfo: { name: SERVICE_NAME, version: '0.1.0' },
-      });
-      client.notify('initialized', {});
-    } catch (err) {
-      // C5 fix: init failed — kill the leaked child and reset globals.
-      log(`codex app-server init failed: ${err.message}`);
-      try { proc.kill('SIGTERM'); } catch {}
-      codexClient = null;
-      codexProc = null;
-      throw err;
-    }
-    codexProc = proc;
-    codexClient = client;
-    log('codex app-server ready');
-    return client;
-  })();
-  try {
-    return await codexInitPromise;
-  } finally {
-    codexInitPromise = null;
+  if (method === "review/start" && result?.reviewThreadId) {
+    threadIds.add(result.reviewThreadId);
   }
+  return threadIds;
 }
 
-/**
- * Run one turn against the long-lived codex app-server. If params.threadId
- * is provided we skip thread/start (W8 thread persistence). Returns the
- * final agent message + threadId + first_byte_ms.
- */
-async function runTurn(params) {
-  // C4 fix: measure latency from before ensureCodexClient so the first-ever
-  // broker probe includes the lazy codex app-server spawn cost, keeping
-  // first_byte_ms comparable with exec mode (both count from process-spawn).
-  const startedAt = Date.now();
-  const client = await ensureCodexClient();
-  const {
-    prompt,
-    projectDir = PROJECT_ROOT,
-    model = null,
-    sandbox = 'read-only',
-    outputSchema = null,
-    ephemeral = false,
-    threadId: existingThreadId = null,
-  } = params || {};
-  if (!prompt) throw new Error('runTurn: prompt is required');
+function buildJsonRpcError(code, message, data) {
+  return data === undefined ? { code, message } : { code, message, data };
+}
 
-  const turnState = {
-    threadId: existingThreadId,
-    items: [],
-    lastAgentMessage: '',
-    completed: false,
-    completionResolve: null,
-    completionReject: null,
-    firstByteAt: null,
-    startedAt,
-  };
-  const completionPromise = new Promise((resolve, reject) => {
-    turnState.completionResolve = resolve;
-    turnState.completionReject = reject;
-  });
-
-  const matchesThread = (np) => {
-    if (!turnState.threadId) return true;
-    const t = np?.threadId || np?.thread_id || np?.thread?.id;
-    return !t || t === turnState.threadId;
-  };
-
-  const notificationHandler = (msg) => {
-    if (!matchesThread(msg.params)) return;
-    if (turnState.firstByteAt === null) {
-      turnState.firstByteAt = Date.now();
-    }
-    if (msg.method === 'item/completed') {
-      const item = msg.params?.item || msg.params || {};
-      turnState.items.push(item);
-      if (item.type === 'agentMessage') {
-        turnState.lastAgentMessage = item.text ?? turnState.lastAgentMessage;
-      }
-    } else if (msg.method === 'turn/completed') {
-      turnState.completed = true;
-      turnState.completionResolve();
-    } else if (msg.method === 'turn/failed' || msg.method === 'turn/error' || msg.method === 'error') {
-      turnState.completionReject(new Error(`turn failed: ${JSON.stringify(msg.params)}`));
-    }
-  };
-
-  // Restore the previous handler when we're done — broker may run more turns.
-  const prevHandler = client.notificationHandler;
-  client.onNotification(notificationHandler);
-
-  const watchdog = setTimeout(() => {
-    turnState.completionReject(new Error(`broker turn watchdog timeout after ${TURN_TIMEOUT_MS / 1000}s`));
-  }, TURN_TIMEOUT_MS);
-
-  try {
-    if (!turnState.threadId) {
-      const threadParams = { cwd: projectDir, approvalPolicy: 'never', sandbox, ephemeral };
-      if (model) threadParams.model = model;
-      const tr = await client.request('thread/start', threadParams);
-      turnState.threadId = tr?.thread?.id || null;
-      if (!turnState.threadId) {
-        throw new Error(`thread/start did not return thread.id: ${JSON.stringify(tr).slice(0, 200)}`);
-      }
-    }
-
-    const turnParams = {
-      threadId: turnState.threadId,
-      input: [{ type: 'text', text: prompt, text_elements: [] }],
-    };
-    if (model) turnParams.model = model;
-    if (outputSchema) turnParams.outputSchema = outputSchema;
-    await client.request('turn/start', turnParams);
-
-    await completionPromise;
-
-    return {
-      finalMessage: turnState.lastAgentMessage,
-      threadId: turnState.threadId,
-      items: turnState.items,
-      first_byte_ms: turnState.firstByteAt ? turnState.firstByteAt - turnState.startedAt : null,
-      latency_ms: Date.now() - turnState.startedAt,
-    };
-  } finally {
-    clearTimeout(watchdog);
-    client.onNotification(prevHandler || (() => {}));
+function send(socket, message) {
+  if (socket.destroyed) {
+    return;
   }
+  socket.write(`${JSON.stringify(message)}\n`);
 }
 
-async function handleRequest(req) {
-  const { method, id } = req || {};
-  switch (method) {
-    case 'ping':
-    case 'status':
-      return {
-        id,
-        result: {
-          ok: true,
-          pid: process.pid,
-          started_at: STARTED_AT,
-          uptime_ms: Date.now() - STARTED_AT,
-          project_root: PROJECT_ROOT,
-          codex_ready: !!(codexClient && !codexClient.closed),
-          method,
-        },
-      };
-    case 'shutdown':
-      // Reply, then schedule exit so the client gets the result.
-      setImmediate(() => gracefulExit(0));
-      return { id, result: { ok: true, shutting_down: true } };
-    case 'turn/run': {
-      // C2: enqueue on global serial queue to prevent overlapping turns on
-      // the single codex app-server client.
-      const prevQueue = turnQueue;
-      let done;
-      turnQueue = new Promise((res) => { done = res; });
-      try {
-        await prevQueue;
-        const result = await runTurn(req.params || {});
-        return { id, result };
-      } catch (e) {
-        return { id, error: { code: -32000, message: e.message } };
-      } finally {
-        done();
-      }
-    }
-    default:
-      return { id, error: { code: -32601, message: `unknown method: ${method}` } };
+function isInterruptRequest(message) {
+  return message?.method === "turn/interrupt";
+}
+
+function writePidFile(pidFile) {
+  if (!pidFile) {
+    return;
   }
-}
-
-function attachConnection(sock) {
-  resetIdleTimer();
-  let buf = '';
-  sock.setEncoding('utf8');
-  sock.on('data', async (chunk) => {
-    buf += chunk;
-    let idx;
-    while ((idx = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, idx);
-      buf = buf.slice(idx + 1);
-      if (!line.trim()) continue;
-      let req;
-      try {
-        req = JSON.parse(line);
-      } catch (e) {
-        try { sock.write(JSON.stringify({ error: { code: -32700, message: `parse error: ${e.message}` } }) + '\n'); } catch {}
-        continue;
-      }
-      try {
-        const reply = await handleRequest(req);
-        try { sock.write(JSON.stringify(reply) + '\n'); } catch {}
-      } catch (e) {
-        try { sock.write(JSON.stringify({ id: req.id, error: { code: -32000, message: e.message } }) + '\n'); } catch {}
-      }
-    }
-  });
-  sock.on('error', () => { try { sock.destroy(); } catch {} });
-  sock.on('close', () => {});
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, `${process.pid}\n`, "utf8");
 }
 
 async function main() {
-  // Defensive: refuse to start if a sibling broker is already alive on the same sock.
-  if (fs.existsSync(SOCK)) {
-    // Try to connect. If it answers, abort. Else it's stale — unlink.
-    const reachable = await new Promise((resolve) => {
-      const probe = net.createConnection(SOCK);
-      probe.once('connect', () => { probe.destroy(); resolve(true); });
-      probe.once('error', () => resolve(false));
-      setTimeout(() => { try { probe.destroy(); } catch {}; resolve(false); }, 200);
-    });
-    if (reachable) {
-      log(`refusing to start: another broker is alive on ${SOCK}`);
-      process.exit(0);
-    }
-    try { fs.unlinkSync(SOCK); } catch {}
+  const [subcommand, ...argv] = process.argv.slice(2);
+  if (subcommand !== "serve") {
+    throw new Error("Usage: node scripts/app-server-broker.mjs serve --endpoint <value> [--cwd <path>] [--pid-file <path>]");
   }
 
-  fs.mkdirSync(path.dirname(SOCK), { recursive: true });
-
-  server = net.createServer(attachConnection);
-  server.on('error', (err) => {
-    log(`server error: ${err.message}`);
-    gracefulExit(1);
+  const { options } = parseArgs(argv, {
+    valueOptions: ["cwd", "pid-file", "endpoint"]
   });
 
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(SOCK, () => {
-      server.removeListener('error', reject);
-      // Restrict to the current user; sockets default to umask which is usually fine
-      // but be explicit since broker may carry sensitive prompt data later.
-      try { fs.chmodSync(SOCK, 0o600); } catch {}
-      resolve();
+  if (!options.endpoint) {
+    throw new Error("Missing required --endpoint.");
+  }
+
+  const cwd = options.cwd ? path.resolve(process.cwd(), options.cwd) : process.cwd();
+  const endpoint = String(options.endpoint);
+  const listenTarget = parseBrokerEndpoint(endpoint);
+  const pidFile = options["pid-file"] ? path.resolve(options["pid-file"]) : null;
+  writePidFile(pidFile);
+
+  // Lazy connect: spawn codex app-server on first request, not at broker startup.
+  // This matches our original W7 lazy-spawn behavior and allows broker to start
+  // (and the socket to become reachable) even before codex is needed.
+  let appClient = null;
+  async function ensureAppClient() {
+    if (!appClient) {
+      appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
+      appClient.setNotificationHandler(routeNotification);
+    }
+    return appClient;
+  }
+
+  let activeRequestSocket = null;
+  let activeStreamSocket = null;
+  let activeStreamThreadIds = null;
+  const sockets = new Set();
+
+  function clearSocketOwnership(socket) {
+    if (activeRequestSocket === socket) {
+      activeRequestSocket = null;
+    }
+    if (activeStreamSocket === socket) {
+      activeStreamSocket = null;
+      activeStreamThreadIds = null;
+    }
+  }
+
+  function routeNotification(message) {
+    const target = activeRequestSocket ?? activeStreamSocket;
+    if (!target) {
+      return;
+    }
+    send(target, message);
+    if (message.method === "turn/completed" && activeStreamSocket === target) {
+      const threadId = message.params?.threadId ?? null;
+      if (!threadId || !activeStreamThreadIds || activeStreamThreadIds.has(threadId)) {
+        activeStreamSocket = null;
+        activeStreamThreadIds = null;
+        if (activeRequestSocket === target) {
+          activeRequestSocket = null;
+        }
+      }
+    }
+  }
+
+  async function shutdown(server) {
+    for (const socket of sockets) {
+      socket.end();
+    }
+    await appClient?.close().catch(() => {});
+    await new Promise((resolve) => server.close(resolve));
+    if (listenTarget.kind === "unix" && fs.existsSync(listenTarget.path)) {
+      fs.unlinkSync(listenTarget.path);
+    }
+    if (pidFile && fs.existsSync(pidFile)) {
+      fs.unlinkSync(pidFile);
+    }
+  }
+
+  const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.setEncoding("utf8");
+    let buffer = "";
+
+    socket.on("data", async (chunk) => {
+      buffer += chunk;
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex !== -1) {
+        const line = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+        newlineIndex = buffer.indexOf("\n");
+
+        if (!line.trim()) {
+          continue;
+        }
+
+        let message;
+        try {
+          message = JSON.parse(line);
+        } catch (error) {
+          send(socket, {
+            id: null,
+            error: buildJsonRpcError(-32700, `Invalid JSON: ${error.message}`)
+          });
+          continue;
+        }
+
+        if (message.id !== undefined && message.method === "initialize") {
+          send(socket, {
+            id: message.id,
+            result: {
+              userAgent: "codex-companion-broker"
+            }
+          });
+          continue;
+        }
+
+        if (message.method === "initialized" && message.id === undefined) {
+          continue;
+        }
+
+        if (message.id !== undefined && message.method === "broker/shutdown") {
+          send(socket, { id: message.id, result: {} });
+          await shutdown(server);
+          process.exit(0);
+        }
+
+        if (message.id === undefined) {
+          continue;
+        }
+
+        const allowInterruptDuringActiveStream =
+          isInterruptRequest(message) && activeStreamSocket && activeStreamSocket !== socket && !activeRequestSocket;
+
+        if (
+          ((activeRequestSocket && activeRequestSocket !== socket) || (activeStreamSocket && activeStreamSocket !== socket)) &&
+          !allowInterruptDuringActiveStream
+        ) {
+          send(socket, {
+            id: message.id,
+            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, "Shared Codex broker is busy.")
+          });
+          continue;
+        }
+
+        if (allowInterruptDuringActiveStream) {
+          try {
+            const result = await (await ensureAppClient()).request(message.method, message.params ?? {});
+            send(socket, { id: message.id, result });
+          } catch (error) {
+            send(socket, {
+              id: message.id,
+              error: buildJsonRpcError(error.rpcCode ?? -32000, error.message)
+            });
+          }
+          continue;
+        }
+
+        const isStreaming = STREAMING_METHODS.has(message.method);
+        activeRequestSocket = socket;
+
+        try {
+          const result = await (await ensureAppClient()).request(message.method, message.params ?? {});
+          send(socket, { id: message.id, result });
+          if (isStreaming) {
+            activeStreamSocket = socket;
+            activeStreamThreadIds = buildStreamThreadIds(message.method, message.params ?? {}, result);
+          }
+          if (activeRequestSocket === socket) {
+            activeRequestSocket = null;
+          }
+        } catch (error) {
+          send(socket, {
+            id: message.id,
+            error: buildJsonRpcError(error.rpcCode ?? -32000, error.message)
+          });
+          if (activeRequestSocket === socket) {
+            activeRequestSocket = null;
+          }
+          if (activeStreamSocket === socket && !isStreaming) {
+            activeStreamSocket = null;
+          }
+        }
+      }
+    });
+
+    socket.on("close", () => {
+      sockets.delete(socket);
+      clearSocketOwnership(socket);
+    });
+
+    socket.on("error", () => {
+      sockets.delete(socket);
+      clearSocketOwnership(socket);
     });
   });
 
-  fs.writeFileSync(PID_PATH, String(process.pid));
-  log(`listening on ${SOCK} (pid=${process.pid}, project=${PROJECT_ROOT})`);
-  resetIdleTimer();
+  process.on("SIGTERM", async () => {
+    await shutdown(server);
+    process.exit(0);
+  });
+
+  process.on("SIGINT", async () => {
+    await shutdown(server);
+    process.exit(0);
+  });
+
+  server.listen(listenTarget.path);
 }
 
-process.on('SIGTERM', () => { log('SIGTERM'); gracefulExit(0); });
-process.on('SIGINT', () => { log('SIGINT'); gracefulExit(0); });
-process.on('uncaughtException', (err) => {
-  log(`uncaught: ${err.stack || err.message}`);
-  gracefulExit(1);
-});
-
-main().catch((err) => {
-  log(`fatal: ${err.stack || err.message}`);
-  cleanupFiles();
+main().catch((error) => {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exit(1);
 });

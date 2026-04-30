@@ -30,7 +30,7 @@ import {
 } from './lib/codex-adapter.mjs';
 import { runAppServerTurn } from './lib/codex-app-server.mjs';
 import {
-  spawnBroker, sendCommand as brokerSendCommand,
+  spawnBroker, runBrokerTurn,
   loadBrokerThread, saveBrokerThread, clearBrokerThread,
   loadBrokerLastTask,
 } from './lib/buddy-broker.mjs';
@@ -297,20 +297,15 @@ async function actionProbe(args) {
       const outputSchemaObj = schemaFile
         ? (() => { try { return JSON.parse(fs.readFileSync(schemaFile, 'utf8')); } catch { return null; } })()
         : null;
-      const reply = await brokerSendCommand(brokerPaths, {
-        method: 'turn/run',
-        params: {
-          prompt: trimPrompt(prompt),
-          projectDir: args['project-dir'],
-          model: args.model || null,
-          outputSchema: outputSchemaObj,
-          ephemeral,
-          threadId: persistedThread,
-        },
-        timeoutMs: 10 * 60 * 1000,
+      // stage6b: use official streaming protocol (turn/start) via runBrokerTurn
+      const r = await runBrokerTurn(brokerPaths, {
+        prompt: trimPrompt(prompt),
+        projectDir: args['project-dir'],
+        model: args.model || null,
+        outputSchema: outputSchemaObj,
+        ephemeral,
+        threadId: persistedThread,
       });
-      if (reply.error) throw new Error(`broker turn failed: ${reply.error.message}`);
-      const r = reply.result || {};
       fs.writeFileSync(outputFile, r.finalMessage || '');
       codexSessionId = r.threadId || null;
       firstByteMs = typeof r.first_byte_ms === 'number' ? r.first_byte_ms : null;

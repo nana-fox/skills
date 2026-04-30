@@ -138,19 +138,18 @@ export async function spawnBroker({
   }
   cleanupStaleFiles(paths);
 
-  const env = {
-    ...process.env,
-    BUDDY_HOME: buddyHome,
-    BUDDY_BROKER_SOCK: paths.sockPath,
-    BUDDY_BROKER_PID: paths.pidPath,
-    BUDDY_BROKER_PROJECT_ROOT: path.resolve(projectRoot),
-  };
-
+  // Official broker CLI: node app-server-broker.mjs serve --endpoint unix:<sock> --cwd <dir> --pid-file <pid>
+  const endpoint = `unix:${paths.sockPath}`;
   const logFd = fs.openSync(paths.logPath, 'a');
-  const child = spawn(process.execPath, [BROKER_PROCESS_PATH], {
+  const child = spawn(process.execPath, [
+    BROKER_PROCESS_PATH, 'serve',
+    '--endpoint', endpoint,
+    '--cwd', path.resolve(projectRoot),
+    '--pid-file', paths.pidPath,
+  ], {
     detached: true,
     stdio: ['ignore', logFd, logFd],
-    env,
+    env: { ...process.env, BUDDY_HOME: buddyHome },
   });
   // Closing our copy of the fd is fine — child has its own.
   fs.closeSync(logFd);
@@ -257,7 +256,7 @@ export async function sendShutdown(paths) {
     return;
   }
   try {
-    await sendCommand(paths, { method: 'shutdown' });
+    await sendCommand(paths, { method: 'broker/shutdown' });
   } catch {
     // Broker may have closed the connection mid-reply; that's fine.
   }
@@ -275,6 +274,119 @@ export async function sendShutdown(paths) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Run a turn via the official streaming broker protocol (stage6b).
+ * Replaces turn/run (synchronous) with the official:
+ *   initialize → initialized → thread/start (if no threadId) → turn/start
+ *   → streaming item/completed notifications (real-time stderr) → turn/completed
+ *
+ * Returns { finalMessage, threadId, first_byte_ms }.
+ */
+export async function runBrokerTurn(brokerPaths, {
+  prompt, projectDir, model, outputSchema, ephemeral, threadId: existingThreadId,
+  timeoutMs = 10 * 60 * 1000,
+} = {}) {
+  const sock = await connectToBroker(brokerPaths, { timeoutMs: COMMAND_TIMEOUT_MS });
+  return new Promise((resolve, reject) => {
+    let buf = '';
+    let nextId = 1;
+    let firstByteAt = null;
+    const startTime = Date.now();
+    let finalMessage = '';
+    let threadId = existingThreadId || null;
+    let settled = false;
+    const pending = new Map();
+
+    const watchdog = setTimeout(() => finish(reject, new Error('runBrokerTurn: timeout')), timeoutMs);
+
+    function finish(fn, val) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      try { sock.destroy(); } catch {}
+      fn(val);
+    }
+
+    function send(msg) { sock.write(JSON.stringify(msg) + '\n'); }
+
+    function request(method, params) {
+      const id = nextId++;
+      return new Promise((res, rej) => {
+        pending.set(id, { resolve: res, reject: rej, method });
+        send({ id, method, params: params || {} });
+      });
+    }
+
+    function handleLine(line) {
+      if (!line.trim()) return;
+      let msg;
+      try { msg = JSON.parse(line); } catch { return; }
+
+      // Response to a pending request
+      if (msg.id !== undefined && !msg.method) {
+        const p = pending.get(msg.id);
+        if (!p) return;
+        pending.delete(msg.id);
+        if (msg.error) p.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+        else p.resolve(msg.result ?? {});
+        return;
+      }
+
+      // Notification (no id) — streaming output
+      if (msg.id === undefined && msg.method) {
+        if (firstByteAt === null) firstByteAt = Date.now();
+        if (msg.method === 'item/completed') {
+          const item = msg.params?.item || msg.params || {};
+          if (item.type === 'agentMessage' && item.text) {
+            finalMessage = item.text;
+            // Real-time stderr: first 120 chars of latest agent message
+            const preview = item.text.slice(0, 120).replace(/\n/g, ' ');
+            process.stderr.write(`[buddy] Codex > ${preview}${item.text.length > 120 ? '…' : ''}\n`);
+          }
+        } else if (msg.method === 'turn/completed') {
+          finish(resolve, { finalMessage, threadId, first_byte_ms: firstByteAt ? firstByteAt - startTime : null });
+        } else if (msg.method === 'turn/failed' || (msg.method === 'error' && !msg.id)) {
+          finish(reject, new Error(`turn failed: ${JSON.stringify(msg.params)}`));
+        }
+      }
+    }
+
+    sock.setEncoding('utf8');
+    sock.on('data', (chunk) => {
+      buf += chunk;
+      let idx;
+      while ((idx = buf.indexOf('\n')) !== -1) {
+        handleLine(buf.slice(0, idx));
+        buf = buf.slice(idx + 1);
+      }
+    });
+    sock.on('error', (err) => finish(reject, err));
+    sock.on('close', () => { if (!settled) finish(reject, new Error('runBrokerTurn: connection closed unexpectedly')); });
+
+    // Async kickoff
+    (async () => {
+      try {
+        await request('initialize', { clientInfo: { title: 'codex-buddy', name: 'Claude Code', version: '1.0.0' } });
+        send({ method: 'initialized', params: {} });
+        if (!threadId) {
+          const tParams = { cwd: projectDir, approvalPolicy: 'never', sandbox: { type: 'none' }, ephemeral: ephemeral !== false };
+          if (model) tParams.model = model;
+          const tr = await request('thread/start', tParams);
+          threadId = tr?.thread?.id || null;
+          if (!threadId) throw new Error('thread/start did not return thread.id');
+        }
+        const turnParams = { threadId, input: [{ type: 'text', text: prompt, text_elements: [] }] };
+        if (model) turnParams.model = model;
+        if (outputSchema) turnParams.outputSchema = outputSchema;
+        await request('turn/start', turnParams);
+        // Streaming notifications now flow until turn/completed
+      } catch (err) {
+        finish(reject, err);
+      }
+    })();
+  });
 }
 
 // ─── W8: thread persistence per (buddy session, worktree) ───
