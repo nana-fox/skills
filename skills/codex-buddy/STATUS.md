@@ -6,7 +6,7 @@
 ---
 
 ## skill_version
-v3.0.2
+v3.1.0
 
 ## health_status
 <!-- HEALTHY | NEEDS_TRIAGE | BLOCKED -->

@@ -4,6 +4,57 @@
 
 ---
 
+## Stage 6b — 2026-04-30 官方 broker 实现替换
+
+### Background
+Stage6a 对齐了基座路径，但 broker 进程仍是自研实现，使用 `turn/run`（同步包装），没有流式输出。用户在等待 30-80s 期间看不到任何中间输出。Auth token 在长时间 broker 存活后也会过期（broker 持有旧 token）。
+
+用户方向：**"底层协议直接按照官方的实现，不行就直接拷贝源码"**
+
+### Content
+- **官方文件直接复制**：`app-server.mjs`, `args.mjs`, `broker-endpoint.mjs`（来自 `openai/codex-plugin-cc`）
+- **`buddy-broker-process.mjs`** 替换为官方 `app-server-broker.mjs`，加 lazy connect（W7 pattern）
+- **`app-server.mjs`** 适配：`broker-lifecycle-stub.mjs` + `SIGTERM` 替换 + `BUDDY_BROKER_CODEX_BIN` 测试注入
+- **`runBrokerTurn()`** 新增：实现官方 `turn/start` + streaming notification 协议，实时写 stderr
+- **`buddy-runtime.mjs`**：用 `runBrokerTurn` 替代旧 `brokerSendCommand(turn/run)`
+- 测试：W8 suite 全面更新，112/112 通过
+
+### 用户可见变化
+```
+以前: [buddy] probe started... (黑盒 65s) → 完整结果
+现在: [buddy] probe started...
+      [buddy] Codex > Reading the diff, I see three areas...
+      [buddy] probe completed in 65432ms
+```
+
+### 无 Codex probe
+直接技术决策（复制官方实现），无需独立审查。
+
+---
+
+## Stage 6a — 2026-04-30 基座对齐官方 codex-plugin-cc
+
+### Content
+- **`scripts/lib/paths.mjs`** 重写：`resolveWorkspaceRoot` (git root) + `resolveStateDir` (`CLAUDE_PLUGIN_DATA` + slug-hash16) + `resolveBuddySessionFile`
+- **`codex-adapter.mjs`**：`saveBuddySession` 用新路径，3 层 fallback（stage6a → stage5e legacy → global legacy）
+- **`hooks/session-start`**：内联 CJS 改为官方路径模式（git root + realpathSync + CLAUDE_PLUGIN_DATA + slug-hash16）；sed → Node.js JSON 解析（C3）
+- **`hooks/session-end`**：Node.js JSON 解析 cwd；明确标注不清学习数据
+- **`buddy-broker.mjs`**：`getWorktreeHash` 改用 `resolveWorkspaceRoot` + `realpathSync`（C1 overall review）
+- **`buddy-runtime.mjs`**：`actionReplay` 传 `{cwd}` 到 `loadBuddySession`（C2 overall review）
+- **新增 `scripts/lib/__tests__/paths.test.mjs`**：13 个测试
+- **新增 `docs/decisions/2026-04-30-stage6a-official-base-alignment.md`**
+
+### L3 验证
+`CLAUDE_PLUGIN_DATA/state/ux-stage1-194a7521b31c7040/buddy-session.json` 写入确认 ✅
+
+### Codex probe 记录
+- gap 优先级（vtask-mokxjk5k）：caution — C2 session-start 已存在但实现不完整
+- 分层架构（vtask-mokziebh）：caution — C2 teardown 不能清学习数据，C7 HANDOFF 污染风险
+- code review（vtask-mol0z8oq）：caution — C1 session-start 旧路径、C2 replay 无 cwd
+- overall review（vtask-mol1gd35）：caution — C1 broker hash 不一致、C2 replay race、C3 sed
+
+---
+
 ## Stage 5e — 2026-04-30 Per-worktree session isolation + handoff injection
 
 ### Background
