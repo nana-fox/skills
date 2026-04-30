@@ -24,7 +24,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { getBuddyHome } from './paths.mjs';
+import { getBuddyHome, resolveWorkspaceRoot } from './paths.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BROKER_PROCESS_PATH = path.resolve(HERE, '..', 'buddy-broker-process.mjs');
@@ -33,9 +33,17 @@ const SPAWN_WAIT_DEFAULT_MS = 5000;
 const SHUTDOWN_WAIT_MS = 2000;
 const COMMAND_TIMEOUT_MS = 5000;
 
+/**
+ * Hash the canonical workspace root for broker file naming.
+ * W-017: align to resolveWorkspaceRoot (git root + realpathSync) so broker
+ * files are co-located with the session state key — SessionEnd can reliably
+ * find and stop the broker regardless of which subdir --project-dir was.
+ */
 export function getWorktreeHash(projectRoot) {
-  const abs = path.resolve(projectRoot);
-  return crypto.createHash('sha256').update(abs).digest('hex').slice(0, 8);
+  const wsRoot = resolveWorkspaceRoot(projectRoot);
+  let canonical = wsRoot;
+  try { canonical = fs.realpathSync(wsRoot); } catch { /* non-existent path */ }
+  return crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 8);
 }
 
 export function getBrokerPaths(home, projectRoot) {
