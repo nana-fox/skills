@@ -22,6 +22,9 @@ if [ ! -t 0 ]; then
 fi
 # C3 fix: parse hook JSON via node (same pattern as session-end), not sed.
 # sed is fragile for cwd paths with escaped chars or pretty-printed JSON.
+# Initialize with defaults first so set -u doesn't fire when stdin is empty.
+trigger=""
+hook_cwd=""
 if [ -n "$hook_input" ] && command -v node >/dev/null 2>&1; then
   trigger="$(printf '%s' "$hook_input" | node -e \
     "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{process.stdout.write(JSON.parse(d).source||'')}catch{}})" \

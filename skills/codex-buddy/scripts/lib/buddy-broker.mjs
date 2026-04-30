@@ -371,7 +371,7 @@ export async function runBrokerTurn(brokerPaths, {
         await request('initialize', { clientInfo: { title: 'codex-buddy', name: 'Claude Code', version: '1.0.0' } });
         send({ method: 'initialized', params: {} });
         if (!threadId) {
-          const tParams = { cwd: projectDir, approvalPolicy: 'never', sandbox: { type: 'none' }, ephemeral: ephemeral !== false };
+          const tParams = { cwd: projectDir, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: ephemeral !== false };
           if (model) tParams.model = model;
           const tr = await request('thread/start', tParams);
           threadId = tr?.thread?.id || null;
