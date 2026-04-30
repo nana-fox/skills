@@ -48,7 +48,7 @@ function writePidFile(pidFile) {
 async function main() {
   const [subcommand, ...argv] = process.argv.slice(2);
   if (subcommand !== "serve") {
-    throw new Error("Usage: node scripts/app-server-broker.mjs serve --endpoint <value> [--cwd <path>] [--pid-file <path>]");
+    throw new Error("Usage: node scripts/buddy-broker-process.mjs serve --endpoint <value> [--cwd <path>] [--pid-file <path>]");
   }
 
   const { options } = parseArgs(argv, {
@@ -63,7 +63,6 @@ async function main() {
   const endpoint = String(options.endpoint);
   const listenTarget = parseBrokerEndpoint(endpoint);
   const pidFile = options["pid-file"] ? path.resolve(options["pid-file"]) : null;
-  writePidFile(pidFile);
 
   // Lazy connect: spawn codex app-server on first request, not at broker startup.
   // This matches our original W7 lazy-spawn behavior and allows broker to start
@@ -243,15 +242,24 @@ async function main() {
   });
 
   process.on("SIGTERM", async () => {
+    setTimeout(() => process.exit(1), 3000).unref();
     await shutdown(server);
     process.exit(0);
   });
 
   process.on("SIGINT", async () => {
+    setTimeout(() => process.exit(1), 3000).unref();
     await shutdown(server);
     process.exit(0);
   });
 
+  server.on("error", (err) => {
+    process.stderr.write(`broker listen error: ${err.message}\n`);
+    process.exit(1);
+  });
+  server.on("listening", () => {
+    writePidFile(pidFile);
+  });
   server.listen(listenTarget.path);
 }
 
