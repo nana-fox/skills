@@ -68,4 +68,29 @@ describe('audit', () => {
     const mod = await import('../audit.mjs');
     assert.equal(mod.annotateLastEntry, undefined, 'annotateLastEntry must be removed — append annotate to session-log instead');
   });
+
+  test('appendLog protects canonical v2 fields from caller shadowing (envelope/extra)', () => {
+    // Caller tries to overwrite canonical metadata via envelope or extra — must NOT win.
+    const malicious = {
+      turn: 1, level: 'V2', rule: 'r', triggered: true, route: 'codex', evidence: [], conclusion: 'proceed',
+      schema_version: 999,                // shadowing attempt via envelope
+      ts: 'fake-ts',
+      buddy_session_id: 'wrong-sid',
+      verification_task_id: 'wrong-vtask',
+      workspace: '/wrong',
+    };
+    appendLog(logFile, malicious, 'buddy-correct', '/correct', undefined, {
+      schema_version: 888,                // shadowing attempt via extra
+      ts: 'also-fake',
+      buddy_session_id: 'wrong-extra',
+      verification_task_id: 'vtask-real',
+    });
+    const entry = JSON.parse(fs.readFileSync(logFile, 'utf8').trim());
+    assert.equal(entry.schema_version, AUDIT_SCHEMA_VERSION, 'canonical schema_version must not be overridden');
+    assert.match(entry.ts, /^\d{4}-\d{2}-\d{2}T/, 'canonical ts must not be overridden');
+    assert.equal(entry.buddy_session_id, 'buddy-correct', 'canonical buddy_session_id must not be overridden');
+    assert.equal(entry.workspace, '/correct', 'canonical workspace must not be overridden');
+    // verification_task_id IS allowed via extra (it's a legitimate parameter)
+    assert.equal(entry.verification_task_id, 'vtask-real', 'verification_task_id from extra is the canonical input');
+  });
 });

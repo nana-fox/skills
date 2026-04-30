@@ -20,14 +20,18 @@ export function appendLog(logFile, envelope, buddySessionId, workspace, latencyM
   }
 
   const { verification_task_id = null, ...restExtra } = extra;
+  // Caller-provided objects come first; canonical metadata is written LAST so
+  // it cannot be silently shadowed by a malformed envelope/extra. The only
+  // caller-controlled canonical input is verification_task_id (legitimate
+  // parameter via `extra`), which we extract above.
   const entry = {
+    ...envelope,
+    ...restExtra,
     schema_version: AUDIT_SCHEMA_VERSION,
     ts: new Date().toISOString(),
     buddy_session_id: buddySessionId,
     verification_task_id,
     workspace,
-    ...envelope,
-    ...restExtra,
   };
   if (latencyMs !== undefined) {
     entry.latency_ms = latencyMs;

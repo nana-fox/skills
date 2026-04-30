@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://buddy.nanafox.com/schemas/envelope.schema.json",
-  "title": "Buddy Decision Envelope",
-  "description": "JSON Schema for buddy v3 verification decision records (includes audit metadata)",
+  "title": "Buddy Decision Envelope (audit schema v2)",
+  "description": "JSON Schema for buddy v3 verification decision records written to ~/.buddy/logs.jsonl. Schema v2 unifies field names with the lifecycle event stream (session-log).",
   "type": "object",
   "required": [
     "turn",
@@ -34,19 +34,17 @@
     },
     "route": {
       "type": "string",
-      "enum": ["local", "codex", "both"],
+      "enum": ["local", "codex", "both", "none"],
       "description": "Verification routing decision"
     },
     "evidence": {
       "type": "array",
-      "items": {
-        "type": "string"
-      },
+      "items": { "type": "string" },
       "description": "Array of evidence items supporting the decision"
     },
     "conclusion": {
       "type": "string",
-      "enum": ["proceed", "stop", "needs-evidence", "needs-review"],
+      "enum": ["proceed", "stop", "needs-evidence", "needs-review", "skipped"],
       "description": "Decision outcome"
     },
     "confidence": {
@@ -56,27 +54,43 @@
     },
     "unverified": {
       "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "Array of items that remain unverified (optional)"
+      "items": { "type": "string" },
+      "description": "Items that remain unverified (optional)"
     },
-    "session_id": {
+    "schema_version": {
+      "type": "integer",
+      "const": 2,
+      "description": "Audit schema version (introduced in v2)"
+    },
+    "ts": {
       "type": "string",
-      "description": "Buddy session ID for budget tracking (added by audit.mjs)"
+      "format": "date-time",
+      "description": "ISO 8601 timestamp. v2 rename of legacy 'timestamp'."
+    },
+    "buddy_session_id": {
+      "type": "string",
+      "description": "Buddy session id, joins with session-log. v2 rename of legacy 'session_id'."
+    },
+    "verification_task_id": {
+      "type": ["string", "null"],
+      "description": "Task id, joins with session-log events. Null only on legacy entries."
     },
     "workspace": {
       "type": "string",
-      "description": "Project working directory (added by audit.mjs)"
-    },
-    "timestamp": {
-      "type": "string",
-      "format": "date-time",
-      "description": "ISO 8601 timestamp (added by audit.mjs)"
+      "description": "Project working directory at time of decision"
     },
     "latency_ms": {
       "type": "number",
-      "description": "Verification latency in milliseconds (added by audit.mjs)"
+      "description": "Verification latency in milliseconds"
+    },
+    "action": {
+      "type": "string",
+      "enum": ["local", "probe", "followup"],
+      "description": "Audit action label (set by buddy-runtime)"
+    },
+    "message": {
+      "type": "string",
+      "description": "Optional free-text note attached by runtime"
     }
   },
   "additionalProperties": false

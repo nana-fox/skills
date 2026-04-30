@@ -28,6 +28,10 @@ echo "$EVIDENCE" | node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action followu
   --evidence-stdin --project-dir "$PWD"
 
 # Annotate（每次 probe 综合后必须）
+# 注意：
+# - 多次部分 annotate 会按字段累积（先 --probe-found-new true，后 --user-adopted true 都保留）
+# - 不传 --verification-task-id 时取该 buddy session 最近一次 probe/followup；并发或多 worktree 共享 buddy session 时建议**显式传 task id**
+# - 老 logs.jsonl（pre-v2 / 无 verification_task_id 且无 session-log）无法补 annotate
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action annotate \
   --probe-found-new true --user-adopted true \
   --verification-task-id <task-id-from-probe-output>

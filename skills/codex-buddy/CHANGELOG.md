@@ -4,6 +4,29 @@
 
 ---
 
+## Stage 5c — 2026-04-30 Stage 5b post-review fixes
+
+### Content
+Codex review of f28d261 returned verdict=caution; 2 high/medium-confidence findings were validated and fixed:
+
+- **C1 [high] Annotate field accumulation regression**: previous `annotateLastEntry` did `{...old, ...fields}` merge. Stage 5b moved annotation to session-log events but `metrics.buildAnnotationLookup` kept "last event wins" per task — so partial annotates (e.g. `--probe-found-new true` then `--user-adopted true`) would lose the earlier field. Fixed by per-field merge across multiple annotate events for the same task.
+- **C2 [medium] Canonical field shadowing in appendLog**: caller-provided `envelope` and `extra` could overwrite `schema_version` / `ts` / `buddy_session_id` / `workspace`. Canonical fields are now written LAST so they win regardless of caller input.
+- **C3 [medium] envelope.schema.json was stale**: still documented `session_id` / `timestamp` with `additionalProperties: false`; new v2 entries failed external validation. Schema rewritten for v2; new `envelope-schema.test.mjs` validates real `appendLog` output against schema (catches future drift).
+- **C4+C5 [medium] CLI doc caveats**: `references/cli-examples.md` annotate section now documents per-field accumulation, the wrong-task risk in concurrent / multi-worktree scenarios (recommend explicit `--verification-task-id`), and the "legacy logs.jsonl entries cannot be retroactively annotated" limitation.
+
+### Test additions
+- `metrics.test.mjs` (new): C1 regression + per-field last-wins + legacy fallback (3 tests)
+- `audit.test.mjs`: shadowing protection (1 test)
+- `envelope-schema.test.mjs` (new): hand-rolled minimal validator catches schema/writer drift (2 tests)
+- Total: 80 → 86 tests, all passing; verify-repo PASSED; smoke OK
+
+### Codex Interaction
+- Probe (after 1 timeout retry, broker runtime): Codex independently reviewed f28d261 with no Claude-side leading conclusions
+- 5 findings total (1 high + 4 medium); 2 confirmed via code-tracing before fixing; 3 medium addressed via docs/refactor
+- C1 was a real semantic regression that Stage 5b's unit tests didn't catch — Codex's "review of own work" caught what self-review missed
+
+---
+
 ## Stage 5b — 2026-04-29 Audit/decision-stream schema v2
 
 ### Content
