@@ -67,16 +67,6 @@ function readPidFile(pidPath) {
   }
 }
 
-function isProcessAlive(pid) {
-  if (!pid) return false;
-  try {
-    process.kill(pid, 0); // signal 0 → existence check
-    return true;
-  } catch (e) {
-    // ESRCH = no such process; EPERM = exists but we can't signal it (still alive)
-    return e.code === 'EPERM';
-  }
-}
 
 function tryUnlink(p) {
   try { fs.unlinkSync(p); } catch {}
@@ -108,10 +98,9 @@ export async function isBrokerAlive(paths) {
     sock.once('error', () => finish(false));
     setTimeout(() => finish(false), 500);
   });
-  if (reachable) return true;
-  // Connect failed: confirm with PID file. If the PID isn't alive, treat as stale.
-  const pid = readPidFile(paths.pidPath);
-  return isProcessAlive(pid);
+  // Socket connect is the authoritative check. Don't fall back to PID: OS can
+  // reuse a PID after the broker exits, so a live PID != a live broker.
+  return reachable;
 }
 
 /**

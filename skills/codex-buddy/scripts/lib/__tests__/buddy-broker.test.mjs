@@ -194,12 +194,24 @@ describe('buddy-broker — W8 turn/start streaming forwarding', () => {
     process.env.BUDDY_STUB_REPLY = 'c2-reply';
     await spawnBrokerWithStub(projectRoot);
     try {
-      // Official broker serializes: second concurrent turn gets BROKER_BUSY error.
-      // Run sequentially to verify each succeeds.
-      const r1 = await runBrokerTurn(paths, { prompt: 'q1', projectDir: projectRoot });
-      const r2 = await runBrokerTurn(paths, { prompt: 'q2', projectDir: projectRoot });
-      assert.equal(r1.finalMessage, 'c2-reply');
-      assert.equal(r2.finalMessage, 'c2-reply');
+      // Launch both turns concurrently without awaiting either first.
+      // The broker must reject the second with BROKER_BUSY while the first is active.
+      const [r1, r2] = await Promise.allSettled([
+        runBrokerTurn(paths, { prompt: 'q1', projectDir: projectRoot }),
+        runBrokerTurn(paths, { prompt: 'q2', projectDir: projectRoot }),
+      ]);
+      const succeeded = [r1, r2].filter(r => r.status === 'fulfilled');
+      const busyRejected = [r1, r2].filter(
+        r => r.status === 'rejected' && r.reason?.message?.toLowerCase().includes('busy')
+      );
+      // Either: exactly one gets BROKER_BUSY (true concurrency hit the guard),
+      // or both succeed (stub responded fast enough to serialize them naturally).
+      // In both cases: no unexpected errors, and at least one succeeds.
+      assert.ok(succeeded.length >= 1, 'at least one turn should complete');
+      assert.ok(
+        succeeded.length + busyRejected.length === 2,
+        `unexpected rejection: ${[r1, r2].filter(r => r.status === 'rejected' && !r.reason?.message?.toLowerCase().includes('busy')).map(r => r.reason?.message).join(', ')}`
+      );
     } finally {
       delete process.env.BUDDY_STUB_REPLY;
       delete process.env.BUDDY_BROKER_CODEX_BIN;

@@ -39,7 +39,7 @@ NONE
   impact: medium
   reversibility: safe
   done_when: "hooks.json includes PreToolUse matcher; hook intercepts rm -rf and injects advisory reminder"
-  status: open
+  status: done
 
 - id: W-017
   type: fix
@@ -48,7 +48,7 @@ NONE
   impact: medium
   reversibility: safe
   done_when: "getBrokerPaths() uses resolveWorkspaceRoot(projectRoot) instead of path.resolve(projectRoot); SessionEnd stops broker correctly when hook cwd != project-dir"
-  status: open
+  status: done
 
 - id: W-016
   type: improve

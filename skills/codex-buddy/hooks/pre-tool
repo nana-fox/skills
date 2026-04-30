@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# PreToolUse advisory hook — destructive Bash operations.
+# Injects a reminder to activate codex-buddy verification before irreversible actions.
+# Non-blocking: always exits 0. Only injects advisory context.
+
+set -euo pipefail
+
+hook_input=""
+if [ ! -t 0 ]; then
+  hook_input=$(cat 2>/dev/null || true)
+fi
+
+# Extract Bash command from hook JSON stdin
+tool_cmd=""
+if [ -n "$hook_input" ] && command -v node >/dev/null 2>&1; then
+  tool_cmd="$(printf '%s' "$hook_input" | node -e \
+    "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const p=JSON.parse(d);process.stdout.write(p.tool_input?.command||'')}catch{}})" \
+    2>/dev/null || true)"
+fi
+
+# Check for destructive patterns (rm -rf / DROP / force-push / reset --hard / DELETE / TRUNCATE)
+is_destructive=0
+case "$tool_cmd" in
+  *"rm -rf"*|*"rm -r "*|*"DROP TABLE"*|*"DROP DATABASE"*|\
+  *"push --force"*|*"push -f"*|*"force-push"*|\
+  *"reset --hard"*|*"git clean -f"*|\
+  *"DELETE FROM"*|*"TRUNCATE TABLE"*|*"git branch -D "*)
+    is_destructive=1
+    ;;
+esac
+
+[ "$is_destructive" -eq 0 ] && exit 0
+
+advisory="[codex-buddy] Destructive operation detected. Floor rules (V3): verify before irreversible actions. Use codex-buddy probe or confirm intent explicitly before proceeding."
+
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$advisory"
+else
+  printf '{"additional_context":"%s"}\n' "$advisory"
+fi
+
+exit 0

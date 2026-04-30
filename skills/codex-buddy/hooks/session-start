@@ -79,10 +79,16 @@ if [ "$trigger" != "compact" ] && [ -x "$(command -v node)" ]; then
   " "$BUDDY_HOME_DIR" "$trigger" "$hook_cwd" 2>/dev/null || true
 fi
 
-# Read SESSION_HANDOFF.md from cwd (project root). Convention: docs/SESSION_HANDOFF.md.
+# Read SESSION_HANDOFF from BUDDY_HOME (not git-tracked).
+# Primary:  ~/.buddy/handoff-<cwdHash8>.md  (keyed by cwd, lives outside repo)
+# Fallback: legacy docs/SESSION_HANDOFF.md  (migration path; will be phased out)
 # Cap at 8KB to keep additionalContext manageable.
 handoff_content=""
-HANDOFF_FILE="${hook_cwd}/docs/SESSION_HANDOFF.md"
+cwdHash8=$(node -e "const c=require('crypto');process.stdout.write(c.createHash('sha256').update(process.argv[1]).digest('hex').slice(0,8))" "$hook_cwd" 2>/dev/null || true)
+HANDOFF_FILE="${BUDDY_HOME_DIR}/handoff-${cwdHash8}.md"
+if [ ! -f "$HANDOFF_FILE" ]; then
+  HANDOFF_FILE="${hook_cwd}/docs/SESSION_HANDOFF.md"
+fi
 if [ -f "$HANDOFF_FILE" ]; then
   handoff_content=$(head -c 8192 "$HANDOFF_FILE" 2>/dev/null || true)
 fi
