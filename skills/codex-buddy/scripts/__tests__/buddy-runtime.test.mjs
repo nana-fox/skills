@@ -421,6 +421,77 @@ describe('CLI: stdin evidence + replay + log-synthesis', () => {
     }
   });
 
+  test('--action probe preserves --ephemeral false through provider routing', () => {
+    const evidence = path.join(os.tmpdir(), `ephemeral-false-${Date.now()}.txt`);
+    fs.writeFileSync(evidence, 'task_to_judge: persistent probe\nraw_evidence: x\nknown_omissions: none\n');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-ephemeral-'));
+    try {
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'probe', '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', `ephemeral-${Date.now()}`, '--ephemeral', 'false'],
+        {
+          encoding: 'utf8',
+          timeout: 20000,
+          env: {
+            ...process.env,
+            BUDDY_STUB_CODEX: '1',
+            BUDDY_USE_LEGACY_EXEC: '1',
+            BUDDY_HOME: tmpHome,
+          },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.runtime, 'exec');
+      assert.equal(json.ephemeral, false);
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action followup can resolve codex session from provider_output event', async () => {
+    const { appendSessionEvent } = await import('../lib/session-log.mjs');
+    const evidence = path.join(os.tmpdir(), `provider-followup-${Date.now()}.txt`);
+    fs.writeFileSync(evidence, 'task_to_judge: followup\nraw_evidence: x\nknown_omissions: none\n');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-provider-followup-'));
+    const sid = `provider-followup-${Date.now()}`;
+    const taskId = 'vtask-provider-output';
+    const codexSessionId = '019d318f-abcd-7890-1234-567890abcdef';
+    const prevHome = process.env.BUDDY_HOME;
+    try {
+      process.env.BUDDY_HOME = tmpHome;
+      appendSessionEvent(sid, taskId, 'probe.provider_output', {
+        provider: 'codex',
+        codex_session_id: codexSessionId,
+      }, '{"verdict":"proceed"}');
+
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'followup', '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', sid, '--verification-task-id', taskId],
+        {
+          encoding: 'utf8',
+          timeout: 20000,
+          env: {
+            ...process.env,
+            BUDDY_STUB_CODEX: '1',
+            BUDDY_HOME: tmpHome,
+          },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.codex_session_id, codexSessionId);
+    } finally {
+      if (prevHome === undefined) delete process.env.BUDDY_HOME;
+      else process.env.BUDDY_HOME = prevHome;
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   test('--action probe rejects --fresh-thread for kimi provider', () => {
     const evidence = path.join(os.tmpdir(), `kimi-fresh-${Date.now()}.txt`);
     fs.writeFileSync(evidence, 'task_to_judge: kimi fresh-thread\nraw_evidence: x\nknown_omissions: none\n');
@@ -455,6 +526,115 @@ describe('CLI: stdin evidence + replay + log-synthesis', () => {
       assert.doesNotMatch(json.message, /ReferenceError|kimiPreflight/);
     } finally {
       fs.rmSync(evidence, { force: true });
+    }
+  });
+
+  test('--action probe with kimi uses final message output without empty summary', () => {
+    const evidence = path.join(os.tmpdir(), `kimi-quiet-${Date.now()}.txt`);
+    const fakeKimi = path.join(os.tmpdir(), `fake-kimi-${Date.now()}.mjs`);
+    fs.writeFileSync(evidence, 'task_to_judge: kimi quiet\nraw_evidence: x\nknown_omissions: none\n');
+    fs.writeFileSync(fakeKimi, `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  console.log('kimi, version fake');
+  process.exit(0);
+}
+console.log('quiet final answer from kimi');
+`);
+    fs.chmodSync(fakeKimi, 0o755);
+    try {
+      const r = spawnSync(
+        process.execPath,
+        [RUNTIME, '--action', 'probe', '--buddy-model', 'kimi',
+         '--evidence', evidence, '--project-dir', '/tmp', '--session-id', `kimi-quiet-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          env: { ...process.env, BUDDY_KIMI_BIN: fakeKimi, BUDDY_HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-kimi-quiet-')) },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.provider, 'kimi');
+      assert.equal(json.transport, 'exec');
+      assert.match(json.evidence_summary[0], /quiet final answer from kimi/);
+      assert.notEqual(json.evidence_summary[0], 'kimi: ');
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(fakeKimi, { force: true });
+    }
+  });
+
+  test('--action probe with kimi fails closed on non-zero exit even with stdout', () => {
+    const evidence = path.join(os.tmpdir(), `kimi-exit-${Date.now()}.txt`);
+    const fakeKimi = path.join(os.tmpdir(), `fake-kimi-fail-${Date.now()}.mjs`);
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-kimi-exit-'));
+    fs.writeFileSync(evidence, 'task_to_judge: kimi exit\nraw_evidence: x\nknown_omissions: none\n');
+    fs.writeFileSync(fakeKimi, `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  console.log('kimi, version fake');
+  process.exit(0);
+}
+console.log('this stdout must not become verified');
+console.error('rate limit');
+process.exit(2);
+`);
+    fs.chmodSync(fakeKimi, 0o755);
+    try {
+      const r = spawnSync(
+        process.execPath,
+        [RUNTIME, '--action', 'probe', '--buddy-model', 'kimi',
+         '--evidence', evidence, '--project-dir', '/tmp', '--session-id', `kimi-exit-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          env: { ...process.env, BUDDY_KIMI_BIN: fakeKimi, BUDDY_HOME: tmpHome },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'error', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.rule, 'kimi-exit-failed');
+      assert.match(json.message, /Kimi exited with code 2/);
+      assert.match(json.message, /rate limit/);
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(fakeKimi, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action probe with kimi fails closed on empty output', () => {
+    const evidence = path.join(os.tmpdir(), `kimi-empty-${Date.now()}.txt`);
+    const fakeKimi = path.join(os.tmpdir(), `fake-kimi-empty-${Date.now()}.mjs`);
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-kimi-empty-'));
+    fs.writeFileSync(evidence, 'task_to_judge: kimi empty\nraw_evidence: x\nknown_omissions: none\n');
+    fs.writeFileSync(fakeKimi, `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  console.log('kimi, version fake');
+  process.exit(0);
+}
+console.error('auth required');
+process.exit(0);
+`);
+    fs.chmodSync(fakeKimi, 0o755);
+    try {
+      const r = spawnSync(
+        process.execPath,
+        [RUNTIME, '--action', 'probe', '--buddy-model', 'kimi',
+         '--evidence', evidence, '--project-dir', '/tmp', '--session-id', `kimi-empty-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          env: { ...process.env, BUDDY_KIMI_BIN: fakeKimi, BUDDY_HOME: tmpHome },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'error', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.rule, 'kimi-empty-output');
+      assert.match(json.message, /auth required/);
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(fakeKimi, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
 });

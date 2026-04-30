@@ -22,21 +22,11 @@
  */
 
 import {
-  checkCodexAvailable, buildProbeArgs, buildResumeArgs, execCodex,
-  parseSessionId, parseSessionIdFromSessions, saveSession, loadSession,
+  checkCodexAvailable, buildResumeArgs, execCodex,
+  loadSession,
   saveBuddySession, loadBuddySession,
-  saveConversationSession, loadConversationSession,
-  trimPrompt,
 } from './lib/codex-adapter.mjs';
-import { execKimi } from './lib/kimi-adapter.mjs';
-import { runAppServerTurn } from './lib/codex-app-server.mjs';
-import {
-  spawnBroker, runBrokerTurn,
-  loadBrokerThread, saveBrokerThread, clearBrokerThread,
-  loadBrokerLastTask,
-} from './lib/buddy-broker.mjs';
-import { getProvider, shouldFallbackFromBrokerError } from './lib/providers.mjs';
-import { checkTopicDrift } from './lib/topic-drift.mjs';
+import { getProvider } from './lib/providers.mjs';
 import { collectEvidence } from './lib/local-evidence.mjs';
 import { createEnvelope } from './lib/envelope.mjs';
 import { appendLog, getCallCount } from './lib/audit.mjs';
@@ -235,113 +225,6 @@ async function actionProbe(args) {
     return;
   }
 
-  // ── Kimi probe branch ────────────────────────────────────────────────────
-  if (buddyModel === 'kimi') {
-    const ev = await loadEvidence(args);
-    if (!ev.ok) {
-      output({ status: 'error', message: ev.error });
-      return;
-    }
-    const verificationTaskId = args['verification-task-id'] || newVerificationTaskId();
-    appendSessionEvent(buddySessionId, verificationTaskId, 'probe.start', {
-      evidence_source: ev.source,
-      project_dir: args['project-dir'],
-      model: 'kimi',
-      rule: args.rule || 'vlevel:V2',
-      level: args.level || 'V2',
-    }, ev.prompt);
-
-    // Preflight: fail fast if kimi is not installed (avoids silent verified-on-failure)
-    const kimiCheck = provider.preflight();
-    if (kimiCheck.status !== 'ok') {
-      output({ status: 'error', rule: 'kimi-unavailable',
-               message: kimiCheck.message });
-      return;
-    }
-
-    process.stderr.write(`[buddy] kimi probe started, sid=${buddySessionId}, ETA 30-80s\n`);
-    const kimiResult = execKimi(ev.prompt, {
-      projectDir: args['project-dir'],
-      model: args.model || undefined,
-    });
-
-    // Fail if kimi failed to spawn (system error, e.g. ENOENT)
-    if (kimiResult.spawnError) {
-      output({ status: 'error', rule: 'kimi-spawn-failed',
-               message: `Kimi spawn error: ${kimiResult.spawnError}` });
-      return;
-    }
-    const latencyMs = Date.now() - startTime;
-
-    // ThinkPart → session log (audit only, not in synthesis)
-    if (kimiResult.parsed.think?.length) {
-      appendSessionEvent(buddySessionId, verificationTaskId, 'probe.kimi_think', {
-        think_parts: kimiResult.parsed.think,
-        kimi_session_id: kimiResult.parsed.sessionId,
-        parse_status: kimiResult.parseStatus,
-      });
-    }
-
-    // Synthesis content: TextPart if parsed ok/partial, raw fallback if failed
-    const synthesisContent = kimiResult.parseStatus !== 'failed'
-      ? kimiResult.parsed.text.join('\n\n')
-      : kimiResult.raw;
-    const fallback = kimiResult.parseStatus !== 'failed' ? 'none' : 'raw';
-
-    const envelope = createEnvelope({
-      turn: parseInt(args.turn) || 0,
-      level: args.level || 'V2',
-      rule: args.rule || 'vlevel:V2',
-      route: 'kimi',
-      evidence: [`kimi: ${synthesisContent.slice(0, 1000)}`],
-      conclusion: 'needs-review',
-    });
-
-    appendLog(logFilePath(), {
-      envelope,
-      buddySessionId,
-      workspace: args['project-dir'],
-      action: 'probe',
-      verificationTaskId,
-      latencyMs,
-      model: 'kimi',
-      parseStatus: kimiResult.parseStatus,
-      fallback,
-    });
-
-    appendSessionEvent(buddySessionId, verificationTaskId, 'probe.kimi_output', {
-      kimi_session_id: kimiResult.parsed.sessionId,
-      parse_status: kimiResult.parseStatus,
-      fallback,
-      parser_version: kimiResult.parserVersion,
-      exit_code: kimiResult.exitCode,
-      latency_ms: latencyMs,
-    }, synthesisContent);
-
-    process.stderr.write(`[buddy] kimi probe completed in ${latencyMs}ms, parse_status=${kimiResult.parseStatus}\n`);
-    output({
-      status: 'verified',
-      rule: envelope.rule,
-      route: 'kimi',
-      model: 'kimi',
-      evidence_summary: envelope.evidence,
-      conclusion: envelope.conclusion,
-      session_id: buddySessionId,
-      verification_task_id: verificationTaskId,
-      kimi_session_id: kimiResult.parsed.sessionId,
-      parse_status: kimiResult.parseStatus,
-      fallback,
-      call_count: getCallCount(logFilePath(), buddySessionId),
-    });
-    return;
-  }
-  // ── End Kimi branch ──────────────────────────────────────────────────────
-
-  if (process.env.BUDDY_STUB_CODEX !== '1' && !checkCodexAvailable()) {
-    output({ status: 'error', rule: 'codex-unavailable', message: 'Codex CLI not found' });
-    return;
-  }
-
   const ev = await loadEvidence(args);
   if (!ev.ok) {
     output({ status: 'error', message: ev.error });
@@ -349,184 +232,61 @@ async function actionProbe(args) {
   }
   const prompt = ev.prompt;
   const evidenceSource = ev.source;
-  const outputFile = `/tmp/buddy-codex-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.txt`;
-
-  // Session policy: isolated (default) | conversation
-  // conversation = persist codex_session_id across probes within one buddy session
   const sessionPolicy = args['session-policy'] === 'conversation' ? 'conversation' : 'isolated';
-  const isConversation = sessionPolicy === 'conversation';
-  const resumedSessionId = isConversation ? loadConversationSession(buddySessionId) : null;
-
   const verificationTaskId = args['verification-task-id'] || newVerificationTaskId();
   appendSessionEvent(buddySessionId, verificationTaskId, 'probe.start', {
     evidence_source: evidenceSource,
     project_dir: args['project-dir'],
+    provider: buddyModel,
+    model: buddyModel,
     session_policy: sessionPolicy,
-    resumed: !!resumedSessionId,
     rule: args.rule || 'vlevel:V2',
     level: args.level || 'V2',
   }, prompt);
 
-  // ephemeral defaults: isolated → true; conversation → false (need persistent session)
-  // Legacy --ephemeral false still honored for backward compat in isolated mode.
-  const ephemeral = isConversation ? false : (args.ephemeral !== 'false');
   const schemaFile = fs.existsSync(CODEX_OUTPUT_SCHEMA) ? CODEX_OUTPUT_SCHEMA : null;
-
-  // Runtime selection (W11 default flip — broker is now the default):
-  //   default                   → broker (W8 long-lived codex app-server, persistent thread)
-  //   BUDDY_USE_LEGACY_EXEC=1   → force exec path (emergency fallback when broker has issues)
-  //   BUDDY_USE_APP_SERVER=1    → spawn-per-call codex app-server (Stage 3-A, opt-in)
-  //   BUDDY_USE_BROKER=0        → same as BUDDY_USE_LEGACY_EXEC=1, explicit opt-out
-  // Resume always goes through `codex exec resume` (broker and exec are separate namespaces).
-  const useBroker = process.env.BUDDY_USE_LEGACY_EXEC !== '1'
-    && process.env.BUDDY_USE_BROKER !== '0'
-    && !resumedSessionId;
-  const useAppServer = !useBroker && process.env.BUDDY_USE_APP_SERVER === '1' && !resumedSessionId;
-
-  const freshThread = args['fresh-thread'] === 'true';
-
-  const cmdSpec = (useBroker || useAppServer)
-    ? null
-    : (resumedSessionId
-        ? buildResumeArgs({ sessionId: resumedSessionId, outputFile, prompt })
-        : buildProbeArgs({
-            projectDir: args['project-dir'],
-            outputFile,
-            prompt,
-            model: args.model || null,
-            ephemeral,
-            outputSchema: schemaFile,
-          }));
-
-  const runtimeLabel = useBroker ? 'broker' : (useAppServer ? 'app-server' : 'exec');
-  let actualRuntimeLabel = runtimeLabel;
-  let brokerFallback = false;
-  let brokerFallbackReason = null;
-  process.stderr.write(`[buddy] probe started, runtime=${runtimeLabel}, sid=${buddySessionId}, ETA 30-80s\n`);
-
   try {
-    const probeStartTime = startTime;
-    let codexSessionId;
-    let firstByteMs = null;
-    if (useBroker) {
-      try {
-        if (process.env.BUDDY_FORCE_BROKER_STARTUP_ERROR) {
-          throw new Error(process.env.BUDDY_FORCE_BROKER_STARTUP_ERROR);
-        }
-        // W6.5: topic-drift tripwire — compare last task with current before reusing thread.
-        const prevTask = freshThread ? null : loadBrokerLastTask(buddySessionId, args['project-dir']);
-        const { warning: driftWarning } = checkTopicDrift(prevTask, prompt);
-        if (driftWarning) process.stderr.write(driftWarning + '\n');
+    const turn = await provider.startTurn({
+      prompt,
+      projectDir: args['project-dir'],
+      model: args.model || null,
+      outputSchema: schemaFile,
+      buddySessionId,
+      sessionPolicy,
+      ephemeral: args.ephemeral,
+      freshThread: args['fresh-thread'] === 'true',
+      startTime,
+    });
+    const providerOutput = turn.finalMessage || '';
+    const parsed = buddyModel === 'codex'
+      ? parseCodexOutput(providerOutput)
+      : { mode: turn.parseStatus || 'final-message', data: null };
+    const followupRecommended = buddyModel === 'codex' && hasQuestions(parsed, providerOutput);
 
-        // Pre-W8 conv thread: stored per (buddy session, worktree). --fresh-thread bypasses.
-        const persistedThread = freshThread
-          ? null
-          : loadBrokerThread(buddySessionId, args['project-dir']);
-        // Ensure broker is up (lazy spawn, reuses live broker).
-        const brokerResult = await spawnBroker({ projectRoot: args['project-dir'] });
-        const { paths: brokerPaths } = brokerResult;
-        // UX: tell user whether broker was just spawned or reused.
-        if (brokerResult.reused === false) {
-          process.stderr.write(`[buddy] broker spawned, ready (pid=${brokerResult.pid})\n`);
-        } else if (persistedThread) {
-          process.stderr.write(`[buddy] reusing thread ${persistedThread}\n`);
-        }
-        const outputSchemaObj = schemaFile
-          ? (() => { try { return JSON.parse(fs.readFileSync(schemaFile, 'utf8')); } catch { return null; } })()
-          : null;
-        // stage6b: use official streaming protocol (turn/start) via runBrokerTurn
-        const r = await runBrokerTurn(brokerPaths, {
-          prompt: trimPrompt(prompt),
-          projectDir: args['project-dir'],
-          model: args.model || null,
-          outputSchema: outputSchemaObj,
-          ephemeral,
-          threadId: persistedThread,
-        });
-        fs.writeFileSync(outputFile, r.finalMessage || '');
-        codexSessionId = r.threadId || null;
-        firstByteMs = typeof r.first_byte_ms === 'number' ? r.first_byte_ms : null;
-        // Persist threadId + first-line task for next probe (W6.5 drift check).
-        if (!freshThread && codexSessionId) {
-          saveBrokerThread(buddySessionId, args['project-dir'], codexSessionId, undefined, prompt.split('\n')[0]);
-        } else if (freshThread) {
-          // Defensive: if user toggled --fresh-thread, also drop any previous
-          // persisted thread so the next default probe doesn't accidentally
-          // resume the freshly forked one.
-          clearBrokerThread(buddySessionId, args['project-dir']);
-        }
-      } catch (brokerErr) {
-        if (!shouldFallbackFromBrokerError(brokerErr)) throw brokerErr;
-        brokerFallback = true;
-        brokerFallbackReason = brokerErr.message.split('\n')[0];
-        actualRuntimeLabel = 'exec';
-        process.stderr.write(`[buddy] broker unavailable, falling back to exec: ${brokerFallbackReason}\n`);
-        const fallbackCmd = buildProbeArgs({
-          projectDir: args['project-dir'],
-          outputFile,
-          prompt,
-          model: args.model || null,
-          ephemeral,
-          outputSchema: schemaFile,
-        });
-        const execOutput = await execCodex(fallbackCmd, {
-          onFirstByte: (ms) => { firstByteMs = ms; },
-        });
-        codexSessionId = ephemeral
-          ? null
-          : (parseSessionId(execOutput)
-             || parseSessionIdFromSessions(Math.max(60_000, Date.now() - probeStartTime + 5000)));
-      }
-    } else if (useAppServer) {
-      // app-server expects outputSchema as a parsed JSON object, not a file path.
-      const outputSchemaObj = schemaFile
-        ? (() => { try { return JSON.parse(fs.readFileSync(schemaFile, 'utf8')); } catch { return null; } })()
-        : null;
-      const r = await runAppServerTurn({
-        prompt: trimPrompt(prompt),
-        projectDir: args['project-dir'],
-        model: args.model || null,
-        outputSchema: outputSchemaObj,
-        ephemeral,
-      });
-      // Write finalMessage to outputFile so downstream parsing matches exec mode.
-      fs.writeFileSync(outputFile, r.finalMessage || '');
-      codexSessionId = r.threadId || null;
-    } else {
-      const execOutput = await execCodex(cmdSpec, {
-        onFirstByte: (ms) => { firstByteMs = ms; },
-      });
-      // Resume keeps the same session id; new non-ephemeral probes parse it from output.
-      // --output-schema suppresses stdout banner, so fall back to scanning ~/.codex/sessions
-      // for the most recent rollout file written since this probe started.
-      codexSessionId = resumedSessionId
-        || (ephemeral
-              ? null
-              : (parseSessionId(execOutput)
-                 || parseSessionIdFromSessions(Math.max(60_000, Date.now() - probeStartTime + 5000))));
-    }
-    // C3 fix: broker thread IDs (thr-N, app-server namespace) must never be
-    // written into the exec-mode session pointer (loadSession / saveSession).
-    // Mixing namespaces causes actionFollowup to `codex exec resume thr-N`.
-    if (actualRuntimeLabel !== 'broker') {
-      if (codexSessionId) {
-        saveSession(codexSessionId);
-        if (isConversation) saveConversationSession(buddySessionId, codexSessionId);
-      } else if (ephemeral) {
-        saveSession('');
-      }
+    for (const event of turn.events || []) {
+      appendSessionEvent(buddySessionId, verificationTaskId, 'probe.provider_event', {
+        provider: turn.provider,
+        transport: turn.transport,
+        thread_id: turn.threadId || null,
+        turn_id: event.turn_id || null,
+        event_subtype: event.subtype,
+      }, event.payload || null);
     }
 
-    const codexResult = fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : '';
-    const parsed = parseCodexOutput(codexResult);
-    const followupRecommended = hasQuestions(parsed, codexResult);
+    if (turn.think?.length) {
+      appendSessionEvent(buddySessionId, verificationTaskId, 'probe.provider_think', {
+        provider: turn.provider,
+        transport: turn.transport,
+        provider_session_id: turn.providerSessionId || null,
+      }, turn.think.join('\n\n'));
+    }
 
     const envelope = createEnvelope({
       turn: parseInt(args.turn) || 0,
       level: args.level || 'V2',
       rule: args.rule || 'vlevel:V2',
-      route: 'codex',
-      evidence: [`codex: ${codexResult.slice(0, 1000)}`],
+      route: buddyModel,
+      evidence: [`${buddyModel}: ${providerOutput.slice(0, 1000)}`],
       conclusion: 'needs-review',
     });
 
@@ -538,54 +298,74 @@ async function actionProbe(args) {
       action: 'probe',
       verificationTaskId,
       latencyMs,
-      model: 'codex',
+      model: buddyModel,
+      parseStatus: turn.parseStatus,
+      fallback: turn.fallback,
     });
 
-    appendSessionEvent(buddySessionId, verificationTaskId, 'probe.codex_output', {
-      codex_session_id: codexSessionId,
-      ephemeral,
-      runtime: actualRuntimeLabel,
-      broker_fallback: brokerFallback,
-      broker_fallback_reason: brokerFallbackReason,
+    appendSessionEvent(buddySessionId, verificationTaskId, 'probe.provider_output', {
+      provider: turn.provider,
+      transport: turn.transport,
+      runtime: turn.runtime,
+      thread_id: turn.threadId || null,
+      codex_session_id: turn.codexSessionId || null,
+      provider_session_id: turn.providerSessionId || null,
+      ephemeral: turn.ephemeral,
+      broker_fallback: turn.brokerFallback || false,
+      broker_fallback_reason: turn.brokerFallbackReason || null,
       parse_mode: parsed.mode,
       verdict: parsed.data?.verdict || null,
       latency_ms: latencyMs,
-      first_byte_ms: firstByteMs,
+      first_byte_ms: turn.firstByteMs ?? null,
       followup_recommended: followupRecommended,
-      codex_output_file: outputFile,
-    }, codexResult);
+      output_file: turn.outputFile || null,
+      parse_status: turn.parseStatus,
+      fallback: turn.fallback,
+      parser_version: turn.parserVersion,
+      exit_code: turn.exitCode,
+      events_count: (turn.events || []).length,
+    }, providerOutput);
 
     process.stderr.write(`[buddy] probe completed in ${latencyMs}ms, verdict=${parsed.data?.verdict || parsed.mode}\n`);
 
     output({
       status: 'verified',
       rule: envelope.rule,
-      route: 'codex',
+      route: buddyModel,
+      provider: turn.provider,
+      model: buddyModel,
+      transport: turn.transport,
       evidence_summary: envelope.evidence,
-      codex_output_file: outputFile,
+      ...(turn.outputFile ? { codex_output_file: turn.outputFile } : {}),
       conclusion: envelope.conclusion,
       unverified: envelope.unverified,
       session_id: buddySessionId,
       verification_task_id: verificationTaskId,
-      codex_session_id: codexSessionId,
-      ephemeral,
+      codex_session_id: turn.codexSessionId || null,
+      kimi_session_id: buddyModel === 'kimi' ? (turn.providerSessionId || null) : undefined,
+      thread_id: turn.threadId || null,
+      provider_session_id: turn.providerSessionId || null,
+      ephemeral: turn.ephemeral,
       session_policy: sessionPolicy,
-      runtime: actualRuntimeLabel,
-      broker_fallback: brokerFallback,
-      broker_fallback_reason: brokerFallbackReason,
-      resumed: !!resumedSessionId,
-      followup_available: !ephemeral && !!codexSessionId,
+      runtime: turn.runtime,
+      broker_fallback: turn.brokerFallback || false,
+      broker_fallback_reason: turn.brokerFallbackReason || null,
+      resumed: !!turn.resumed,
+      followup_available: buddyModel === 'codex' && !turn.ephemeral && !!turn.codexSessionId,
       followup_recommended: followupRecommended,
       call_count: getCallCount(logFilePath(), buddySessionId),
       parse_mode: parsed.mode,
+      parse_status: turn.parseStatus,
+      fallback: turn.fallback,
+      events_count: (turn.events || []).length,
       structured: parsed.data,
     });
   } catch (e) {
     appendSessionEvent(buddySessionId, verificationTaskId, 'probe.error', {
       message: e.message.split('\n')[0],
-      codex_output_file: outputFile,
+      provider: buddyModel,
     });
-    output({ status: 'error', message: e.message.split('\n')[0], codex_output_file: outputFile, verification_task_id: verificationTaskId });
+    output({ status: 'error', rule: e.code || `${buddyModel}-failed`, message: e.message.split('\n')[0], verification_task_id: verificationTaskId });
   }
 }
 
@@ -597,7 +377,7 @@ function lookupCodexSessionByTaskId(buddySessionId, verificationTaskId) {
   const events = readSessionEvents(buddySessionId);
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if ((e.event === 'probe.codex_output' || e.event === 'followup.codex_output')
+    if ((e.event === 'probe.provider_output' || e.event === 'probe.codex_output' || e.event === 'followup.codex_output')
         && e.verification_task_id === verificationTaskId
         && e.codex_session_id) {
       return e.codex_session_id;
@@ -720,7 +500,7 @@ async function actionAnnotate(args) {
              message: `No fields to annotate. Use ${Object.keys(ANNOTATION_FLAG_MAP).map(f => '--' + f).join(' and/or ')}.` });
     return;
   }
-  // Default task id: latest probe.codex_output ONLY (not followup.codex_output).
+  // Default task id: latest probe output ONLY (not followup.codex_output).
   // metrics computes annotation rates over probes, so attaching annotation to
   // a followup task would silently drop the metric. Caller can override with
   // --verification-task-id to annotate a followup explicitly.
@@ -729,7 +509,7 @@ async function actionAnnotate(args) {
     const events = readSessionEvents(buddySessionId);
     for (let i = events.length - 1; i >= 0; i--) {
       const e = events[i];
-      if (e.event === 'probe.codex_output') {
+      if (e.event === 'probe.provider_output' || e.event === 'probe.codex_output') {
         taskId = e.verification_task_id;
         break;
       }

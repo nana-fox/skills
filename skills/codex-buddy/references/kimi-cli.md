@@ -46,22 +46,32 @@ EOF
 
 buddy-runtime spawns:
 ```
-kimi --print --afk -p "<evidence+prompt>"
+kimi --quiet -p "<evidence+prompt>"
 ```
 
 | Flag | Purpose |
 |------|---------|
-| `--print` | Non-interactive print mode (auto-dismiss AskUserQuestion, auto-approve tools) |
-| `--afk`   | Away-from-keyboard: no user present, fully autonomous turn |
+| `--quiet` | Non-interactive final-message output; used as the stable synthesis source |
 | `-p`      | Prompt text (evidence + task) |
 
-**`--afk` note**: This flag means Kimi may automatically apply tool calls without confirmation. Ensure evidence prompts do not contain instructions that could trigger unintended file modifications. codex-buddy passes evidence as read-only context framing, not as executable instructions.
+Tests can override the executable with `BUDDY_KIMI_BIN=/path/to/fake-kimi`.
 
 ---
 
-## Output Format (Kimi --print v1.40.0)
+## Output Format
 
-Kimi `--print` emits a Python-repr-style event stream to stdout:
+Primary path: `kimi --quiet -p` prints the final assistant message to stdout.
+buddy-runtime treats non-empty stdout as the synthesis content and records:
+
+| Field | Value |
+|-------|-------|
+| `parse_status` | `ok` |
+| `parser_version` | `kimi-quiet-v1` |
+| `fallback` | `none` |
+
+Legacy compatibility: the old `--print` Python-repr parser remains in
+`scripts/lib/parsers/kimi-repr-v1.mjs` for fixtures and older integrations. That
+format looked like:
 
 ```
 TurnBegin(user_input='...')
@@ -79,21 +89,22 @@ To resume this session: kimi -r <uuid>
 ```
 
 **buddy-runtime handling:**
-- `ThinkPart.think` → written to `~/.buddy/sessions/<sid>.jsonl` as `probe.kimi_think` event (audit, not shown in synthesis)
-- `TextPart.text` → used as synthesis content (equivalent to Codex final message)
-- Session ID → extracted from resume line, stored in session log
+- Quiet stdout → used as synthesis content (equivalent to Codex final message)
+- Legacy `ThinkPart.think` → written to `~/.buddy/sessions/<sid>.jsonl` as `probe.provider_think` event (audit, not shown in synthesis)
+- Legacy `TextPart.text` → used as synthesis content when quiet final output is not available
+- Legacy session ID → extracted from resume line, stored in session log
 
 ---
 
 ## Parser Status
 
-The parser (`parsers/kimi-repr-v1.mjs`) uses best-effort regex matching:
+Kimi provider parsing is best-effort:
 
 | `parseStatus` | Meaning | Synthesis source |
 |--------------|---------|-----------------|
-| `ok` | Both think and text extracted | `TextPart.text` |
-| `partial` | Text extracted, think missing | `TextPart.text` |
-| `failed` | No text extracted | raw stdout (fallback) |
+| `ok` | Quiet stdout found, or legacy text extracted | final message / `TextPart.text` |
+| `partial` | Legacy text extracted, think missing | `TextPart.text` |
+| `failed` | No usable text extracted | raw stdout (fallback) |
 
 `fallback: 'none'` when parseStatus is ok/partial; `fallback: 'raw'` when failed.
 Both `parse_status` and `fallback` are written to the audit log row.
@@ -103,8 +114,8 @@ Both `parse_status` and `fallback` are written to the audit log row.
 ## Session Resume
 
 Kimi supports session resumption but **resume is not implemented in this version**:
-- The session ID is parsed from `To resume this session: kimi -r <uuid>`
-- It is stored in `~/.buddy/sessions/<sid>.jsonl` as `kimi_session_id`
+- The legacy session ID can be parsed from `To resume this session: kimi -r <uuid>`
+- It is stored in `~/.buddy/sessions/<sid>.jsonl` as `provider_session_id`
 - `kimi -r <uuid>` for manual resume if needed
 
 ---
@@ -115,7 +126,8 @@ Kimi supports session resumption but **resume is not implemented in this version
 |---------|--------|
 | `BUDDY_USE_LEGACY_EXEC=1` | Force Codex exec path (does NOT affect Kimi routing) |
 | `BUDDY_USE_BROKER=0` | Same as above |
-| (no Kimi-specific env var) | Use `--buddy-model kimi` arg to activate |
+| `BUDDY_KIMI_BIN=/path/to/kimi` | Override Kimi executable; mainly for tests |
+| (activation flag) | Use `--buddy-model kimi` arg to activate |
 
 ---
 

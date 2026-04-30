@@ -43,7 +43,7 @@ for (const f of files) {
     try { e = JSON.parse(line); } catch { continue; }
     const ts = Date.parse(e.ts || 0);
     if (!Number.isFinite(ts) || ts < cutoff) continue;
-    if (e.event === 'probe.codex_output') counters.probe_count++;
+    if (e.event === 'probe.provider_output' || e.event === 'probe.codex_output') counters.probe_count++;
     else if (e.event === 'reply.vlevel-header') counters.reply_vlevel_header++;
     else if (e.event === 'reply.synthesis') counters.reply_synthesis++;
     else if (e.event === 'reply.narrate-discipline') counters.reply_narrate_discipline++;

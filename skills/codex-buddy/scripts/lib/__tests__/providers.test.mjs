@@ -2,6 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getProvider,
+  listProviders,
   normalizeProviderName,
   shouldFallbackFromBrokerError,
 } from '../providers.mjs';
@@ -23,6 +24,18 @@ describe('providers', () => {
     assert.equal(kimi.name, 'kimi');
     assert.deepEqual(kimi.transports, ['exec']);
     assert.equal(kimi.supportsFreshThread, false);
+  });
+
+  test('registry exposes provider contract entrypoints', () => {
+    assert.deepEqual(listProviders().sort(), ['codex', 'kimi']);
+    for (const name of listProviders()) {
+      const provider = getProvider(name);
+      assert.equal(typeof provider.preflight, 'function');
+      assert.equal(typeof provider.startTurn, 'function');
+      assert.ok(provider.capabilities);
+      assert.equal(provider.capabilities.name, name);
+      assert.ok(Array.isArray(provider.capabilities.transports));
+    }
   });
 
   test('rejects unknown buddy providers', () => {

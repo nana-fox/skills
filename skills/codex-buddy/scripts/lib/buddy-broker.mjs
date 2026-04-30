@@ -271,7 +271,7 @@ function sleep(ms) {
  *   initialize → initialized → thread/start (if no threadId) → turn/start
  *   → streaming item/completed notifications (real-time stderr) → turn/completed
  *
- * Returns { finalMessage, threadId, first_byte_ms }.
+ * Returns { finalMessage, threadId, first_byte_ms, events }.
  */
 export async function runBrokerTurn(brokerPaths, {
   prompt, projectDir, model, outputSchema, ephemeral, threadId: existingThreadId,
@@ -285,6 +285,7 @@ export async function runBrokerTurn(brokerPaths, {
     const startTime = Date.now();
     let finalMessage = '';
     let threadId = existingThreadId || null;
+    const events = [];
     let settled = false;
     const pending = new Map();
 
@@ -326,6 +327,11 @@ export async function runBrokerTurn(brokerPaths, {
       // Notification (no id) — streaming output
       if (msg.id === undefined && msg.method) {
         if (firstByteAt === null) firstByteAt = Date.now();
+        events.push({
+          type: 'provider_event',
+          subtype: msg.method,
+          payload: msg.params || {},
+        });
         if (msg.method === 'item/completed') {
           const item = msg.params?.item || msg.params || {};
           if (item.type === 'agentMessage' && item.text) {
@@ -335,7 +341,12 @@ export async function runBrokerTurn(brokerPaths, {
             process.stderr.write(`[buddy] Codex > ${preview}${item.text.length > 120 ? '…' : ''}\n`);
           }
         } else if (msg.method === 'turn/completed') {
-          finish(resolve, { finalMessage, threadId, first_byte_ms: firstByteAt ? firstByteAt - startTime : null });
+          finish(resolve, {
+            finalMessage,
+            threadId,
+            first_byte_ms: firstByteAt ? firstByteAt - startTime : null,
+            events,
+          });
         } else if (msg.method === 'turn/failed' || (msg.method === 'error' && !msg.id)) {
           finish(reject, new Error(`turn failed: ${JSON.stringify(msg.params)}`));
         }

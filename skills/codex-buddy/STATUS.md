@@ -75,8 +75,9 @@ NONE
 ## 架构边界
 
 本方案当前支持 **2 个 buddy model**：`codex`（默认）、`kimi`（`--buddy-model kimi`）。
-- Kimi 解析（`parsers/kimi-repr-v1.mjs`）为 best-effort；`partial`/`failed` 不阻断主流程，fallback 到 raw stdout
-- 引入第三个模型时**必须重构为 registry 模式**（`scripts/lib/model-registry.mjs`），禁止再加 if 分支
+- provider registry 已落地：`codex` / `kimi` 都通过统一 `startTurn()` contract 接入，禁止在 runtime 主流程继续追加模型分支
+- Codex provider 默认走官方 app-server/broker 事件协议，exec 只作为 fallback/degraded transport
+- Kimi provider 当前为 exec-only，使用 final-message 输出并映射为 provider events；legacy repr parser 仅作兼容参考
 - Kimi session resume 未实现（session ID 已记录在 audit log，可手动 `kimi -r <id>`）
 
 ## external_docs

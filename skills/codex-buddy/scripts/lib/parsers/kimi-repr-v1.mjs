@@ -1,7 +1,7 @@
 /**
  * kimi-repr-v1.mjs — Parser for Kimi CLI --print output format
  *
- * Kimi --print --afk emits a Python-repr-style event stream:
+ * Legacy Kimi --print emitted a Python-repr-style event stream:
  *   TurnBegin(user_input='...')
  *   ThinkPart(type='think', think='...', encrypted=None)
  *   TextPart(type='text', text='...')

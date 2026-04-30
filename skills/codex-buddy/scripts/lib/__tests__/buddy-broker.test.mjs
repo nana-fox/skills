@@ -164,6 +164,9 @@ describe('buddy-broker — W8 turn/start streaming forwarding', () => {
       const r = await runBrokerTurn(paths, { prompt: 'is this safe?', projectDir: projectRoot });
       assert.equal(r.finalMessage, 'hello-from-stub');
       assert.match(r.threadId || '', /^thr-\d+$/);
+      assert.ok(Array.isArray(r.events));
+      assert.equal(r.events.some((e) => e.type === 'provider_event' && e.subtype === 'item/completed'), true);
+      assert.equal(r.events.some((e) => e.type === 'provider_event' && e.subtype === 'turn/completed'), true);
     } finally {
       delete process.env.BUDDY_STUB_REPLY;
       delete process.env.BUDDY_BROKER_CODEX_BIN;

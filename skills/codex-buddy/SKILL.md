@@ -58,9 +58,9 @@ Gate 触发后：先 **local evidence**（grep/test/lint）→ 不够再 **buddy
 通过 `<SKILL_DIR>/scripts/buddy-runtime.mjs` 调度（base directory 见 skill 加载行）。
 完整 CLI 见 [`references/cli-examples.md`](./references/cli-examples.md)。
 
-**默认证据传递：stdin**（不再写 `/tmp` 临时文件）：
+**默认证据传递：stdin**（不再写 `/tmp` 临时文件作为输入通道）：
 `echo "$evidence" | node ".../buddy-runtime.mjs" --action probe --evidence-stdin --project-dir "$PWD"`
-也支持 `--evidence <file>` 兼容形式。runtime 自动把每次交互写入 `~/.buddy/sessions/<sid>.jsonl`（事件流：probe.start / codex_output / annotate / synthesis；payload 默认 redacted，sha256+bytes 可校验；`BUDDY_AUDIT_RAW=1` 写 raw）。
+也支持 `--evidence <file>` 兼容形式。Codex provider 默认走官方 app-server/broker 事件协议；Kimi provider 走 CLI exec 并映射为同一套 provider events。runtime 自动把每次交互写入 `~/.buddy/sessions/<sid>.jsonl`（审计历史，不是实时通信通道；payload 默认 redacted，sha256+bytes 可校验；`BUDDY_AUDIT_RAW=1` 写 raw）。
 
 **复用机制（不要混淆）：** `buddy_session_id` 只做审计；`--session-policy isolated|conversation` 只控 exec resume；`--fresh-thread` 只控 Codex broker thread（Kimi 是 exec-only）。
 

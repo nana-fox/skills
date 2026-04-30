@@ -2,7 +2,7 @@
 /**
  * buddy-bench.mjs — latency benchmark for codex probes.
  *
- * Default mode: reads ~/.buddy/sessions/*.jsonl, groups probe.codex_output
+ * Default mode: reads ~/.buddy/sessions/*.jsonl, groups probe.provider_output
  * events by runtime, outputs p50/p95/avg/n + first_byte_ms breakdown.
  *
  * broker-startup-delta mode (W9 acceptance):
@@ -18,6 +18,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getBuddyHome } from './lib/paths.mjs';
+
+function isProbeOutputEvent(event) {
+  return event === 'probe.provider_output' || event === 'probe.codex_output';
+}
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a, i, arr) => a.startsWith('--') ? [a.slice(2), arr[i + 1] ?? 'true'] : null).filter(Boolean)
@@ -38,7 +42,8 @@ for (const f of fs.readdirSync(sessionsDir).filter(x => x.endsWith('.jsonl'))) {
   for (const line of lines) {
     let e;
     try { e = JSON.parse(line); } catch { continue; }
-    if (e.event !== 'probe.codex_output') continue;
+    if (!isProbeOutputEvent(e.event)) continue;
+    if (e.provider && e.provider !== 'codex') continue;
     const ts = Date.parse(e.ts || 0);
     if (!Number.isFinite(ts) || ts < cutoff) continue;
     const rt = e.runtime || 'unknown';
@@ -102,7 +107,8 @@ if (mode === 'broker-startup-delta') {
     for (const line of lines) {
       let e;
       try { e = JSON.parse(line); } catch { continue; }
-      if (e.event !== 'probe.codex_output' || e.runtime !== 'broker') continue;
+      if (!isProbeOutputEvent(e.event) || e.runtime !== 'broker') continue;
+      if (e.provider && e.provider !== 'codex') continue;
       const ts = Date.parse(e.ts || 0);
       if (!Number.isFinite(ts) || ts < cutoff) continue;
       if (!bySession.has(sid)) bySession.set(sid, []);

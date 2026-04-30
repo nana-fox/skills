@@ -49,14 +49,15 @@ node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action replay --session-id buddy-
 ```
 
 **Provider / transport 语义：**
-- `--buddy-model codex`（默认）：支持 `broker | app-server | exec`。broker 默认启用，启动失败会回退 exec；`BUDDY_USE_LEGACY_EXEC=1` 或 `BUDDY_USE_BROKER=0` 可强制 exec。
-- `--buddy-model kimi`：只走 Kimi CLI exec path，不支持 `--fresh-thread` 或 Codex broker thread。
+- `--buddy-model codex`（默认）：支持 `broker | app-server | exec`。broker 默认启用，走官方 app-server 事件协议；启动失败会回退 exec；`BUDDY_USE_LEGACY_EXEC=1` 或 `BUDDY_USE_BROKER=0` 可强制 exec。
+- `--buddy-model kimi`：只走 Kimi CLI exec path，当前使用 final-message 输出并映射为 provider events；不支持 `--fresh-thread` 或 Codex broker thread。
 - `buddy_session_id` 是审计 ID；`codex_session_id` 是 exec resume ID；broker `threadId` 属于 app-server namespace，不写入 exec session pointer。
 
 **会话事件日志：** runtime 自动把每次交互写入 `~/.buddy/sessions/<buddy-session-id>.jsonl`：
-- `probe.start` / `probe.codex_output` / `probe.synthesis` / `annotate` / `*.error`
+- `probe.start` / `probe.provider_event` / `probe.provider_output` / `probe.synthesis` / `annotate` / `*.error`
 - 每行含 `payload`（默认 redacted）+ `payload_sha256` + `payload_bytes` + `redaction_policy`
 - 大于 256KiB 的 payload 转 `payload_ref`（外部文件，路径 `~/.buddy/sessions/<sid>.payloads/`）
+- 文件日志只做审计和 replay；agent 间实时交流优先走 provider 协议/CLI stdout，不通过文件轮询。
 
 **敏感信息 / Redaction**：
 - 默认 redact 模式覆盖：OpenAI sk-/sk-proj-/sk-svcacct-、Anthropic sk-ant-、GitHub ghp_/gho_/github_pat_、AWS AKIA、Slack xox[abprs]-、Stripe rk_/sk_、JWT、`Authorization: Bearer/Basic/Token`、env-style key=value（api_key/token/password/access_token/refresh_token/client_secret 等）

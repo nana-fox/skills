@@ -7,30 +7,28 @@
 
 ## Architecture Decision
 
-**Chosen: Option A — Top-level routing fork** in `actionProbe`.
+**Current design: provider registry + shared probe flow.**
 
 ```
 buddy-runtime.mjs:actionProbe(args)
-  ├─ args['buddy-model'] === 'kimi'
-  │    └─ kimi-adapter.mjs:execKimi()
-  │         └─ parsers/kimi-repr-v1.mjs:parse()
-  │              → { think[], text[], sessionId, parseStatus }
-  │
-  └─ default (codex)
-       ├─ broker path (default)
-       ├─ exec path (BUDDY_USE_LEGACY_EXEC=1)
-       └─ app-server path (BUDDY_USE_APP_SERVER=1)
+  └─ providers.mjs:getProvider(args['buddy-model']).startTurn(...)
+       ├─ codex provider
+       │    ├─ broker path (default)
+       │    ├─ app-server path (BUDDY_USE_APP_SERVER=1)
+       │    └─ exec path (BUDDY_USE_LEGACY_EXEC=1 / fallback)
+       └─ kimi provider
+            └─ kimi-adapter.mjs:execKimi()
+                 ├─ quiet final-message stdout (primary)
+                 └─ parsers/kimi-repr-v1.mjs (legacy compatibility)
 ```
 
-**Why Option A?**
-- Codex three paths (exec/broker/app-server) are zero-touch — no regression risk
-- Kimi is exec-only (no broker equivalent) — sharing the main flow would require awkward conditionals
-- Clean separation: each model owns its full execution path
+**Why this shape?**
+- `buddy-runtime.mjs` owns shared evidence loading, audit logging, synthesis envelope, and JSON output.
+- `providers.mjs` owns provider capabilities and turn execution.
+- Codex and Kimi both return the same normalized turn shape: final message, transport, provider events, session IDs, parser metadata.
+- New CLI agents can be added as providers without branching the runtime.
 
-**Rejected: Option B** (shared probe main flow with internal switch)
-- Codex's three-path runtime selection (useBroker/useAppServer/exec) doesn't map to Kimi's exec-only model
-- Would introduce `if (model === 'kimi') skip this / use that` noise throughout
-- Violates zero-regression principle
+Session JSONL is audit/replay history. It is not the realtime communication channel between agents.
 
 ---
 
@@ -38,11 +36,12 @@ buddy-runtime.mjs:actionProbe(args)
 
 ```
 scripts/
-├── buddy-runtime.mjs          — actionProbe: Kimi branch added at top
+├── buddy-runtime.mjs          — shared actionProbe flow
 ├── lib/
-│   ├── kimi-adapter.mjs       — Kimi exec + preflight (no parsing)
+│   ├── providers.mjs          — Codex/Kimi registry and startTurn contracts
+│   ├── kimi-adapter.mjs       — Kimi exec + preflight
 │   └── parsers/
-│       └── kimi-repr-v1.mjs   — Best-effort Kimi --print output parser
+│       └── kimi-repr-v1.mjs   — Best-effort legacy Kimi --print output parser
 ```
 
 ---
@@ -89,26 +88,21 @@ Kimi probe appends `model: 'kimi'`, `parse_status`, and `fallback`.
 
 **This implementation supports exactly 2 buddy models: `codex` and `kimi`.**
 
-Adding a third model requires refactoring to a registry pattern:
+Models are now registered through `scripts/lib/providers.mjs`:
 ```js
-// Future: scripts/lib/model-registry.mjs
-const ADAPTERS = {
-  codex: codexAdapter,
-  kimi: kimiAdapter,
-  // deepseek: deepseekAdapter,
-};
+const provider = getProvider(args['buddy-model'] || 'codex');
+await provider.startTurn({ prompt, projectDir, buddySessionId });
 ```
 
-Do NOT add a third model by copying the Kimi `if` branch — that leads to unmaintainable duplication. Refactor first.
+Do NOT add a third model by copying provider-specific branches into `buddy-runtime.mjs`; implement the provider contract and register it.
 
 ---
 
 ## Known Limitations
 
-1. **Kimi output format is not a public contract** — `ThinkPart`/`TextPart` repr format may change in future Kimi versions. If parsing degrades, check for a `--json` flag in newer Kimi CLI versions.
+1. **Kimi output format is not a public contract** — runtime now prefers final-message output, with repr parsing retained only as compatibility fallback.
 2. **Session resume not implemented** — `kimi_session_id` is recorded in session log but `kimi -r <id>` resume is not wired into `actionFollowup`.
 3. **No broker for Kimi** — Each probe spawns a fresh `kimi` process. No persistent thread across probes.
-4. **`--afk` flag semantics** — Kimi's afk mode auto-approves all tool calls. Ensure probes only pass evidence, not instructions.
 
 ---
 

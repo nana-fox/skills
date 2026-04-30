@@ -6,7 +6,8 @@
  *
  * Event types:
  *   probe.start         — evidence sent to Codex
- *   probe.codex_output  — Codex returned (raw output, parsed verdict if structured)
+ *   probe.provider_event — Provider streaming/progress event normalized by runtime
+ *   probe.provider_output — Provider returned final output
  *   probe.synthesis     — Claude wrote synthesis (logged via --action log-event)
  *   annotate            — probe_found_new / user_adopted recorded
  *
@@ -78,8 +79,8 @@ function buildPayloadFields(buddySessionId, raw) {
  * Append an event to the buddy session log.
  *
  * @param {string} buddySessionId
- * @param {string} verificationTaskId — groups stages of one verification (probe.start + probe.codex_output ...)
- * @param {string} event              — event type (probe.start / probe.codex_output / ...)
+ * @param {string} verificationTaskId — groups stages of one verification (probe.start + probe.provider_output ...)
+ * @param {string} event              — event type (probe.start / probe.provider_output / ...)
  * @param {object} fields             — event-specific fields (excluding payload helpers)
  * @param {string|object|null} rawPayload — large blob; will be redacted unless BUDDY_AUDIT_RAW=1
  */
