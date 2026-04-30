@@ -33,7 +33,11 @@ for f in \
   hooks/hooks.json \
   hooks/run-hook.cmd \
   hooks/session-start; do
-  [ -f "$SKILL_DIR/$f" ] && pass "$f" || fail "$f MISSING"
+  if [ -f "$SKILL_DIR/$f" ]; then
+    pass "$f"
+  else
+    fail "$f MISSING"
+  fi
 done
 
 echo "── 关键文件（仓库级）──"
@@ -41,7 +45,11 @@ for f in \
   CLAUDE.md \
   README.md \
   .claude-plugin/marketplace.json; do
-  [ -f "$REPO_ROOT/$f" ] && pass "(root) $f" || fail "(root) $f MISSING"
+  if [ -f "$REPO_ROOT/$f" ]; then
+    pass "(root) $f"
+  else
+    fail "(root) $f MISSING"
+  fi
 done
 echo ""
 
@@ -186,7 +194,6 @@ echo ""
 # ── 9. 独立发现落地检查 ───────────────────────────────────────
 echo "── 独立发现落地检查 ──"
 # CHANGELOG 中"登记为后续改进"或"unresolved"的标记，必须有对应 work_queue 条目或已关闭
-DEFERRED_MARKERS=$(grep -oP '(?<=（|: ).*?(?=（登记为后续改进）)' "$SKILL_DIR/CHANGELOG.md" 2>/dev/null || true)
 UNRESOLVED_COUNT=$(grep -c 'unresolved' "$SKILL_DIR/CHANGELOG.md" 2>/dev/null || true)
 DEFERRED_COUNT=$(grep -c '登记为后续改进' "$SKILL_DIR/CHANGELOG.md" 2>/dev/null || true)
 
@@ -301,7 +308,11 @@ V3_FILES=(
   "schemas/audit-row-v2.schema.json"
 )
 for f in "${V3_FILES[@]}"; do
-  [ -f "$SKILL_DIR/$f" ] && pass "$f" || fail "$f MISSING"
+  if [ -f "$SKILL_DIR/$f" ]; then
+    pass "$f"
+  else
+    fail "$f MISSING"
+  fi
 done
 
 # schema files are valid JSON
