@@ -102,11 +102,11 @@ describe('redact + session-log', () => {
   test('redact() masks sk-proj-/sk-svcacct-/github_pat_/Bearer headers', async () => {
     const { redact } = await import('../lib/redact.mjs');
     const r = redact([
-      'OPENAI_API_KEY=sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAA',
-      'gh = github_pat_11ABCDEFG0123456789012345678901234567890123456789012345',
+      'OPENAI_API_KEY=sk-proj-' + 'AAAAAAAAAAAAAAAAAAAAAAAAA',
+      'gh = github_pat_' + '11ABCDEFG0123456789012345678901234567890123456789012345',
       'Authorization: Bearer abcdefghijklmnopqrstuvwx',
-      'svc=sk-svcacct-XXXXXXXXXXXXXXXXXXXXXXXXX',
-      'slack=xo_xb-1234567890-abcdefghijklmnop',
+      'svc=sk-svcacct-' + 'XXXXXXXXXXXXXXXXXXXXXXXXX',
+      'slack=xo' + 'xb-1234567890-abcdefghijklmnop',
     ].join('\n'));
     assert.match(r, /\[REDACTED:openai-key\]/);
     assert.match(r, /\[REDACTED:github-token\]/);
