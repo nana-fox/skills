@@ -640,7 +640,8 @@ async function actionLogReply(args) {
 }
 
 async function actionReplay(args) {
-  const buddySessionId = args['session-id'] || loadBuddySession();
+  // C2 fix: pass cwd so loadBuddySession uses new path, not global legacy pointer.
+  const buddySessionId = args['session-id'] || loadBuddySession(args['project-dir'] ? { cwd: args['project-dir'] } : {});
   if (!buddySessionId) {
     output({ status: 'error', message: 'No buddy session ID. Pass --session-id <id>.' });
     return;

@@ -20,9 +20,17 @@ hook_input=""
 if [ ! -t 0 ]; then
   hook_input=$(cat 2>/dev/null || true)
 fi
-trigger="$(printf '%s' "$hook_input" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+# C3 fix: parse hook JSON via node (same pattern as session-end), not sed.
+# sed is fragile for cwd paths with escaped chars or pretty-printed JSON.
+if [ -n "$hook_input" ] && command -v node >/dev/null 2>&1; then
+  trigger="$(printf '%s' "$hook_input" | node -e \
+    "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{process.stdout.write(JSON.parse(d).source||'')}catch{}})" \
+    2>/dev/null || true)"
+  hook_cwd="$(printf '%s' "$hook_input" | node -e \
+    "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{process.stdout.write(JSON.parse(d).cwd||'')}catch{}})" \
+    2>/dev/null || true)"
+fi
 [ -z "$trigger" ] && trigger="startup"
-hook_cwd="$(printf '%s' "$hook_input" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 [ -z "$hook_cwd" ] && hook_cwd="${PWD}"
 
 BUDDY_HOME_DIR="${BUDDY_HOME:-${HOME}/.buddy}"

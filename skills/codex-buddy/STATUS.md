@@ -41,6 +41,15 @@ NONE
   done_when: "hooks.json includes PreToolUse matcher; hook intercepts rm -rf and injects advisory reminder"
   status: open
 
+- id: W-017
+  type: fix
+  title: align broker path hashing to git-root (C1 from stage6a Codex review)
+  source: Codex review vtask-mol0z8oq-6f45f140
+  impact: medium
+  reversibility: safe
+  done_when: "getBrokerPaths() uses resolveWorkspaceRoot(projectRoot) instead of path.resolve(projectRoot); SessionEnd stops broker correctly when hook cwd != project-dir"
+  status: open
+
 - id: W-016
   type: improve
   title: Codex protocol communication performance optimization
