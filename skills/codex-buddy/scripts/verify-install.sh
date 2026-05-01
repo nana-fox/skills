@@ -32,6 +32,58 @@ SYNC_CMD="bash scripts/sync-skill.sh --host $HOST"
 fail() { echo "  ✗ $1"; FAIL=1; }
 pass() { echo "  ✓ $1"; }
 
+check_file() {
+  local rel="$1"
+  if [ -f "$INSTALL_DIR/$rel" ]; then
+    if diff -q "$SKILL_DIR/$rel" "$INSTALL_DIR/$rel" > /dev/null 2>&1; then
+      pass "$rel 一致"
+    else
+      fail "$rel 不一致 → 运行: $SYNC_CMD"
+    fi
+  else
+    fail "$rel 不存在"
+  fi
+}
+
+check_tree() {
+  local rel_dir="$1"
+  echo "── $rel_dir/ 一致性 ──"
+  if [ ! -d "$SKILL_DIR/$rel_dir" ]; then
+    fail "$rel_dir/ 源目录缺失"
+    echo ""
+    return
+  fi
+  if [ ! -d "$INSTALL_DIR/$rel_dir" ]; then
+    fail "$rel_dir/ 目录缺失"
+    echo ""
+    return
+  fi
+
+  while IFS= read -r src_file; do
+    [ -f "$src_file" ] || continue
+    local rel="${src_file#$SKILL_DIR/}"
+    if [ -f "$INSTALL_DIR/$rel" ]; then
+      if diff -q "$src_file" "$INSTALL_DIR/$rel" > /dev/null 2>&1; then
+        pass "$rel 一致"
+      else
+        fail "$rel 不一致"
+      fi
+    else
+      fail "$rel 缺失"
+    fi
+  done < <(find "$SKILL_DIR/$rel_dir" -type f | sort)
+
+  while IFS= read -r installed_file; do
+    [ -f "$installed_file" ] || continue
+    local rel="${installed_file#$INSTALL_DIR/}"
+    if [ ! -f "$SKILL_DIR/$rel" ]; then
+      fail "$rel 是残留文件（源已删除）"
+    fi
+  done < <(find "$INSTALL_DIR/$rel_dir" -type f | sort)
+
+  echo ""
+}
+
 echo "=== verify-install.sh (host: $HOST) ==="
 echo "skill_dir: $SKILL_DIR"
 echo "install_dir: $INSTALL_DIR"
@@ -77,48 +129,18 @@ else
 fi
 echo ""
 
-# ── 3. SKILL.md 一致性 ─────────────────────────────────────────
-echo "── SKILL.md 一致性 ──"
-if [ -f "$INSTALL_DIR/SKILL.md" ]; then
-  if diff -q "$SKILL_DIR/SKILL.md" "$INSTALL_DIR/SKILL.md" > /dev/null 2>&1; then
-    pass "SKILL.md 一致"
-  else
-    fail "SKILL.md 不一致 → 运行: $SYNC_CMD"
-  fi
-else
-  fail "SKILL.md 不存在"
-fi
+# ── 3. 顶层文件一致性 ─────────────────────────────────────────
+echo "── 顶层文件一致性 ──"
+check_file "SKILL.md"
+check_file "STATUS.md"
+check_file "CHANGELOG.md"
 echo ""
 
-# ── 4. references/ 一致性 ──────────────────────────────────────
-echo "── references/ 一致性 ──"
-if [ -d "$INSTALL_DIR/references" ]; then
-  for f in "$SKILL_DIR"/references/*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    if [ -f "$INSTALL_DIR/references/$BASENAME" ]; then
-      if diff -q "$f" "$INSTALL_DIR/references/$BASENAME" > /dev/null 2>&1; then
-        pass "references/$BASENAME 一致"
-      else
-        fail "references/$BASENAME 不一致"
-      fi
-    else
-      fail "references/$BASENAME 缺失"
-    fi
-  done
-
-  # 检查安装目录中是否有多余文件（源已删除但安装副本残留）
-  for f in "$INSTALL_DIR"/references/*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    if [ ! -f "$SKILL_DIR/references/$BASENAME" ]; then
-      fail "references/$BASENAME 是残留文件（源已删除）"
-    fi
-  done
-else
-  fail "references/ 目录缺失"
-fi
-echo ""
+# ── 4. 运行时资产一致性 ────────────────────────────────────────
+check_tree "references"
+check_tree "scripts"
+check_tree "schemas"
+check_tree "hooks"
 
 # ── 最终结果 ─────────────────────────────────────────────────
 if [ "$FAIL" -eq 0 ]; then

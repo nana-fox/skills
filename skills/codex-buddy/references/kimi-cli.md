@@ -44,30 +44,41 @@ EOF
 
 ## How Kimi Is Invoked
 
-buddy-runtime spawns:
+buddy-runtime defaults to Wire mode:
 ```
-kimi --quiet -p "<evidence+prompt>"
+kimi --wire
 ```
 
-| Flag | Purpose |
-|------|---------|
-| `--quiet` | Non-interactive final-message output; used as the stable synthesis source |
-| `-p`      | Prompt text (evidence + task) |
+The runtime sends JSON-RPC over stdio:
+
+| Method | Purpose |
+|--------|---------|
+| `initialize` | Best-effort handshake; method-not-found is tolerated for compatibility |
+| `prompt` | Start a Kimi turn with the evidence prompt |
+| `cancel` | Protocol-level cancellation before process kill on timeout |
+| `event` | Kimi notifications normalized into `probe.provider_event` rows |
+| `request` | Rejected by default in review mode; codex-buddy does not grant tool actions through Kimi |
 
 Tests can override the executable with `BUDDY_KIMI_BIN=/path/to/fake-kimi`.
+Set `BUDDY_KIMI_TRANSPORT=exec` to force the legacy path.
 
 ---
 
 ## Output Format
 
-Primary path: `kimi --quiet -p` prints the final assistant message to stdout.
-buddy-runtime treats non-empty stdout as the synthesis content and records:
+Primary path: `kimi --wire` streams JSON-RPC events and returns the final prompt
+result. buddy-runtime uses the final prompt text as synthesis content and records:
 
 | Field | Value |
 |-------|-------|
-| `parse_status` | `ok` |
-| `parser_version` | `kimi-quiet-v1` |
+| `transport` | `wire` |
+| `runtime` | `wire` |
 | `fallback` | `none` |
+| `events_count` | provider events emitted by Wire |
+
+Legacy path: `kimi --quiet -p` prints the final assistant message to stdout.
+buddy-runtime treats non-empty stdout as the synthesis content and records
+`transport: exec`, `parser_version: kimi-quiet-v1`.
 
 Legacy compatibility: the old `--print` Python-repr parser remains in
 `scripts/lib/parsers/kimi-repr-v1.mjs` for fixtures and older integrations. That
@@ -89,7 +100,9 @@ To resume this session: kimi -r <uuid>
 ```
 
 **buddy-runtime handling:**
-- Quiet stdout → used as synthesis content (equivalent to Codex final message)
+- Wire final prompt text → used as synthesis content (equivalent to Codex final message)
+- Wire `event` notifications → written to `~/.buddy/sessions/<sid>.jsonl` as `probe.provider_event`
+- Legacy quiet stdout → used as synthesis content when `BUDDY_KIMI_TRANSPORT=exec` or Wire falls back
 - Legacy `ThinkPart.think` → written to `~/.buddy/sessions/<sid>.jsonl` as `probe.provider_think` event (audit, not shown in synthesis)
 - Legacy `TextPart.text` → used as synthesis content when quiet final output is not available
 - Legacy session ID → extracted from resume line, stored in session log
@@ -127,6 +140,8 @@ Kimi supports session resumption but **resume is not implemented in this version
 | `BUDDY_USE_LEGACY_EXEC=1` | Force Codex exec path (does NOT affect Kimi routing) |
 | `BUDDY_USE_BROKER=0` | Same as above |
 | `BUDDY_KIMI_BIN=/path/to/kimi` | Override Kimi executable; mainly for tests |
+| `BUDDY_KIMI_TRANSPORT=exec` | Force legacy Kimi exec path instead of Wire |
+| `KIMI_CLI_NO_AUTO_UPDATE=1` | Disabled by default in Wire child process to avoid startup prompts |
 | (activation flag) | Use `--buddy-model kimi` arg to activate |
 
 ---

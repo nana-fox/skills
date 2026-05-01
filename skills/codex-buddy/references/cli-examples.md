@@ -7,7 +7,7 @@
 ## buddy-runtime 调用速查
 
 ```bash
-# Provider preflight（默认 codex；kimi 是 exec-only）
+# Provider preflight（默认 codex；kimi 默认 Wire，exec 仅作 fallback）
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight --buddy-model codex
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight --buddy-model kimi
 

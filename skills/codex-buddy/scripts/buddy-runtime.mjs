@@ -22,7 +22,6 @@
  */
 
 import {
-  checkCodexAvailable, buildResumeArgs, execCodex,
   loadSession,
   saveBuddySession, loadBuddySession,
 } from './lib/codex-adapter.mjs';
@@ -220,7 +219,7 @@ async function actionProbe(args) {
     output({
       status: 'error',
       model: buddyModel,
-      message: '--fresh-thread is only supported by the codex broker transport; kimi is exec-only.',
+      message: '--fresh-thread is only supported by the codex broker transport; kimi has its own provider transport.',
     });
     return;
   }
@@ -372,45 +371,56 @@ async function actionProbe(args) {
 // Look up the codex_session_id of a specific verification task from session log,
 // avoiding the global ~/.buddy/session.json pointer (which can be overwritten by
 // any concurrent probe and link followup to the wrong session).
-function lookupCodexSessionByTaskId(buddySessionId, verificationTaskId) {
+function lookupProviderSessionByTaskId(buddySessionId, verificationTaskId, providerName = 'codex') {
   if (!verificationTaskId) return null;
   const events = readSessionEvents(buddySessionId);
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if ((e.event === 'probe.provider_output' || e.event === 'probe.codex_output' || e.event === 'followup.codex_output')
-        && e.verification_task_id === verificationTaskId
-        && e.codex_session_id) {
-      return e.codex_session_id;
+    if ((e.event === 'probe.provider_output' || e.event === 'probe.codex_output' || e.event === 'followup.provider_output' || e.event === 'followup.codex_output')
+        && e.verification_task_id === verificationTaskId) {
+      if (e.provider && e.provider !== providerName && providerName !== 'codex') continue;
+      const providerSessionId = e.provider_session_id
+        || (providerName === 'codex' ? e.codex_session_id : null)
+        || e.codex_session_id
+        || null;
+      if (providerSessionId) return providerSessionId;
     }
   }
   return null;
 }
 
-// I3 fix: implement followup using buildResumeArgs + execCodex
 async function actionFollowup(args) {
+  let provider;
+  try {
+    provider = getProvider(args['buddy-model'] || 'codex');
+  } catch (e) {
+    output({ status: 'error', message: e.message });
+    return;
+  }
+  const buddyModel = provider.name;
   const buddySessionId = getOrCreateBuddySessionId(args['session-id'], args['project-dir']);
   // Resolution order (most specific → least, to avoid global session.json overwrite race):
+  //   0. --provider-session-id (explicit provider namespace)
   //   1. --codex-session-id (explicit)
-  //   2. --verification-task-id → look up codex_session_id from session log
+  //   2. --verification-task-id → look up provider_session_id from session log
   //   3. loadSession() global last pointer (deprecated; warns)
-  let codexSessionId = args['codex-session-id'] || null;
-  if (!codexSessionId && args['verification-task-id']) {
-    codexSessionId = lookupCodexSessionByTaskId(buddySessionId, args['verification-task-id']);
+  let providerSessionId = args['provider-session-id'] || args['codex-session-id'] || null;
+  if (!providerSessionId && args['verification-task-id']) {
+    providerSessionId = lookupProviderSessionByTaskId(buddySessionId, args['verification-task-id'], buddyModel);
   }
-  if (!codexSessionId) {
-    codexSessionId = loadSession();
-    if (codexSessionId) {
+  if (!providerSessionId && buddyModel === 'codex') {
+    providerSessionId = loadSession();
+    if (providerSessionId) {
       process.stderr.write('[buddy-runtime] Warning: using global ~/.buddy/session.json pointer; pass --verification-task-id or --codex-session-id to disambiguate.\n');
     }
   }
 
-  if (!codexSessionId) {
-    output({ status: 'error', message: 'No Codex session ID available for follow-up. Pass --verification-task-id <id> or --codex-session-id <id>, or run probe with --ephemeral false first.' });
-    return;
-  }
-
-  if (process.env.BUDDY_STUB_CODEX !== '1' && !checkCodexAvailable()) {
-    output({ status: 'error', rule: 'codex-unavailable', message: 'Codex CLI not found' });
+  if (!providerSessionId) {
+    output({
+      status: 'error',
+      provider: buddyModel,
+      message: `No ${provider.displayName || buddyModel} provider session ID available for follow-up. Pass --verification-task-id <id> or --provider-session-id <id>${buddyModel === 'codex' ? ' / --codex-session-id <id>, or run probe with --ephemeral false first' : ''}.`,
+    });
     return;
   }
 
@@ -420,32 +430,31 @@ async function actionFollowup(args) {
     return;
   }
   const prompt = ev.prompt;
-  const outputFile = `/tmp/buddy-codex-followup-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.txt`;
   const startTime = Date.now();
   const verificationTaskId = args['verification-task-id'] || newVerificationTaskId();
-  process.stderr.write(`[buddy] followup started, sid=${buddySessionId}, codex_session=${codexSessionId.slice(0, 8)}, ETA 30-80s\n`);
+  process.stderr.write(`[buddy] followup started, provider=${buddyModel}, sid=${buddySessionId}, provider_session=${providerSessionId.slice(0, 8)}, ETA 30-80s\n`);
   appendSessionEvent(buddySessionId, verificationTaskId, 'followup.start', {
     evidence_source: ev.source,
-    codex_session_id: codexSessionId,
+    provider: buddyModel,
+    provider_session_id: providerSessionId,
+    ...(buddyModel === 'codex' ? { codex_session_id: providerSessionId } : {}),
   }, prompt);
 
-  const cmdSpec = buildResumeArgs({
-    sessionId: codexSessionId,
-    outputFile,
-    prompt,
-  });
-
   try {
-    await execCodex(cmdSpec);
-
-    const codexResult = fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : '';
+    const turn = await provider.followupTurn({
+      prompt,
+      providerSessionId,
+      projectDir: args['project-dir'],
+      model: args.model || null,
+    });
+    const providerResult = turn.finalMessage || '';
 
     const envelope = createEnvelope({
       turn: parseInt(args.turn) || 0,
       level: args.level || 'V2',
       rule: args.rule || 'vlevel:V2',
-      route: 'codex',
-      evidence: [`codex-followup: ${codexResult.slice(0, 1000)}`],
+      route: buddyModel,
+      evidence: [`${buddyModel}-followup: ${providerResult.slice(0, 1000)}`],
       conclusion: 'needs-review',
     });
 
@@ -457,36 +466,64 @@ async function actionFollowup(args) {
       action: 'followup',
       verificationTaskId,
       latencyMs,
-      model: 'codex',
+      model: buddyModel,
     });
 
-    appendSessionEvent(buddySessionId, verificationTaskId, 'followup.codex_output', {
-      codex_session_id: codexSessionId,
+    appendSessionEvent(buddySessionId, verificationTaskId, 'followup.provider_output', {
+      provider: turn.provider,
+      transport: turn.transport,
+      runtime: turn.runtime,
+      provider_session_id: turn.providerSessionId || providerSessionId,
+      ...(turn.codexSessionId ? { codex_session_id: turn.codexSessionId } : {}),
       latency_ms: latencyMs,
-      codex_output_file: outputFile,
-    }, codexResult);
+      provider_output_file: turn.outputFile || null,
+      ...(turn.outputFile && turn.provider === 'codex' ? { codex_output_file: turn.outputFile } : {}),
+      events_count: (turn.events || []).length,
+    }, providerResult);
+
+    if (turn.provider === 'codex') {
+      appendSessionEvent(buddySessionId, verificationTaskId, 'followup.codex_output', {
+        codex_session_id: turn.codexSessionId || turn.providerSessionId || providerSessionId,
+        provider_session_id: turn.providerSessionId || providerSessionId,
+        latency_ms: latencyMs,
+        codex_output_file: turn.outputFile || null,
+      }, providerResult);
+    }
 
     process.stderr.write(`[buddy] followup completed in ${latencyMs}ms\n`);
 
     output({
       status: 'verified',
       rule: envelope.rule,
-      route: 'codex',
+      route: buddyModel,
+      provider: turn.provider,
+      model: buddyModel,
+      transport: turn.transport,
       evidence_summary: envelope.evidence,
-      codex_output_file: outputFile,
+      provider_output_file: turn.outputFile || null,
+      ...(turn.outputFile && turn.provider === 'codex' ? { codex_output_file: turn.outputFile } : {}),
       conclusion: envelope.conclusion,
       unverified: envelope.unverified,
       session_id: buddySessionId,
       verification_task_id: verificationTaskId,
-      codex_session_id: codexSessionId,
+      provider_session_id: turn.providerSessionId || providerSessionId,
+      codex_session_id: turn.codexSessionId || (turn.provider === 'codex' ? (turn.providerSessionId || providerSessionId) : null),
       call_count: getCallCount(logFilePath(), buddySessionId),
     });
   } catch (e) {
     appendSessionEvent(buddySessionId, verificationTaskId, 'followup.error', {
       message: e.message.split('\n')[0],
-      codex_output_file: outputFile,
+      provider: buddyModel,
+      provider_session_id: providerSessionId,
+      ...(buddyModel === 'codex' ? { codex_session_id: providerSessionId } : {}),
     });
-    output({ status: 'error', message: e.message.split('\n')[0], codex_output_file: outputFile, verification_task_id: verificationTaskId });
+    output({
+      status: 'error',
+      rule: e.code || `${buddyModel}-followup-failed`,
+      provider: buddyModel,
+      message: e.message.split('\n')[0],
+      verification_task_id: verificationTaskId,
+    });
   }
 }
 

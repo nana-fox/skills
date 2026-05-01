@@ -77,7 +77,7 @@ NONE
 本方案当前支持 **2 个 buddy model**：`codex`（默认）、`kimi`（`--buddy-model kimi`）。
 - provider registry 已落地：`codex` / `kimi` 都通过统一 `startTurn()` contract 接入，禁止在 runtime 主流程继续追加模型分支
 - Codex provider 默认走官方 app-server/broker 事件协议，exec 只作为 fallback/degraded transport
-- Kimi provider 当前为 exec-only，使用 final-message 输出并映射为 provider events；legacy repr parser 仅作兼容参考
+- Kimi provider 默认走 Wire transport，exec 仅作 fallback；Wire events 映射为 provider events，legacy repr parser 仅作兼容参考
 - Kimi session resume 未实现（session ID 已记录在 audit log，可手动 `kimi -r <id>`）
 
 ## external_docs

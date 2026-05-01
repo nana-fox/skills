@@ -138,14 +138,15 @@ Main Agent
             │    ├─ app-server：官方事件协议
             │    └─ exec：legacy / fallback，保留 output file
             └─ kimi provider
-                 └─ exec：kimi --quiet -p，final message 映射为 provider events
+                 ├─ wire（默认）：kimi --wire，JSON-RPC events/actions
+                 └─ exec（fallback）：kimi --quiet -p，legacy final message
 ```
 
 关键边界：
 
 - `buddy-runtime.mjs` 只处理公共编排：证据读取、审计日志、输出 envelope、错误收敛。
 - `providers.mjs` 是扩展点：每个 provider 暴露 `preflight()`、`startTurn()`、`capabilities`。
-- Codex broker/app-server 使用事件协议返回 `provider_event`；Kimi CLI 虽是 exec-only，也被归一化为同一套事件。
+- Codex broker/app-server 使用事件协议返回 `provider_event`；Kimi 默认使用 Wire JSON-RPC 事件，也被归一化为同一套 provider event。
 - `~/.buddy/sessions/<sid>.jsonl` 是审计/回放历史，不是 Agent 间实时通信通道。
 - 输入默认走 stdin；只有 Codex exec fallback 仍使用临时 output file，因为 Codex CLI 需要 `-o` 输出文件。
 
@@ -154,7 +155,7 @@ Provider 能力：
 | Provider | Transport | Thread/Resume | 说明 |
 |----------|-----------|---------------|------|
 | Codex | `broker` / `app-server` / `exec` | broker thread / exec resume | 默认 provider，broker 启动失败自动 fallback exec |
-| Kimi | `exec` | 暂不支持 | 使用 `kimi --quiet -p`；非 0 exit 或空输出 fail-closed |
+| Kimi | `wire` / `exec` | Wire session metadata / exec 暂不支持 | 默认 `kimi --wire`；exec 只作 legacy fallback；非 0 exit 或空输出 fail-closed |
 
 新增 provider 时不要在 runtime 里加分支；实现 provider contract 并注册到 `providers.mjs`。
 

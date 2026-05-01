@@ -483,7 +483,53 @@ describe('CLI: stdin evidence + replay + log-synthesis', () => {
       );
       const json = JSON.parse(r.stdout);
       assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.provider, 'codex');
+      assert.equal(json.provider_session_id, codexSessionId);
+      assert.equal(json.provider_output_file, json.codex_output_file);
       assert.equal(json.codex_session_id, codexSessionId);
+
+      const log = fs.readFileSync(path.join(tmpHome, 'sessions', `${sid}.jsonl`), 'utf8');
+      assert.match(log, /"event":"followup\.provider_output"/);
+      assert.match(log, /"event":"followup\.codex_output"/);
+    } finally {
+      if (prevHome === undefined) delete process.env.BUDDY_HOME;
+      else process.env.BUDDY_HOME = prevHome;
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action followup with kimi returns unsupported provider error', async () => {
+    const { appendSessionEvent } = await import('../lib/session-log.mjs');
+    const evidence = path.join(os.tmpdir(), `kimi-followup-${Date.now()}.txt`);
+    fs.writeFileSync(evidence, 'task_to_judge: kimi followup\nraw_evidence: x\nknown_omissions: none\n');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-kimi-followup-'));
+    const sid = `kimi-followup-${Date.now()}`;
+    const taskId = 'vtask-kimi-followup';
+    const prevHome = process.env.BUDDY_HOME;
+    try {
+      process.env.BUDDY_HOME = tmpHome;
+      appendSessionEvent(sid, taskId, 'probe.provider_output', {
+        provider: 'kimi',
+        provider_session_id: 'kimi-session-1',
+      }, 'kimi first response');
+
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'followup', '--buddy-model', 'kimi',
+         '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', sid, '--verification-task-id', taskId],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          env: { ...process.env, BUDDY_HOME: tmpHome },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'error', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.rule, 'kimi-followup-unsupported');
+      assert.equal(json.provider, 'kimi');
+      assert.match(json.message, /does not support follow-up/i);
     } finally {
       if (prevHome === undefined) delete process.env.BUDDY_HOME;
       else process.env.BUDDY_HOME = prevHome;
@@ -561,6 +607,90 @@ console.log('quiet final answer from kimi');
     } finally {
       fs.rmSync(evidence, { force: true });
       fs.rmSync(fakeKimi, { force: true });
+    }
+  });
+
+  test('--action probe with kimi uses wire transport by default', () => {
+    const evidence = path.join(os.tmpdir(), `kimi-wire-runtime-${Date.now()}.txt`);
+    const fakeKimi = path.join(os.tmpdir(), `fake-kimi-wire-runtime-${Date.now()}.mjs`);
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-kimi-wire-runtime-'));
+    fs.writeFileSync(evidence, 'task_to_judge: kimi wire runtime\nraw_evidence: x\nknown_omissions: none\n');
+    fs.writeFileSync(fakeKimi, `#!/usr/bin/env node
+import readline from 'node:readline';
+if (process.argv.includes('--version')) {
+  console.log('kimi, version fake');
+  process.exit(0);
+}
+const rl = readline.createInterface({ input: process.stdin });
+function send(msg) { process.stdout.write(JSON.stringify(msg) + '\\n'); }
+rl.on('line', (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
+  if (msg.method === 'prompt') {
+    send({ jsonrpc: '2.0', method: 'event', params: { event: { type: 'ContentPart', text: 'runtime stream event' } } });
+    send({ jsonrpc: '2.0', id: msg.id, result: { text: 'runtime wire final' } });
+    process.exit(0);
+  }
+});
+`);
+    fs.chmodSync(fakeKimi, 0o755);
+    try {
+      const r = spawnSync(
+        process.execPath,
+        [RUNTIME, '--action', 'probe', '--buddy-model', 'kimi',
+         '--evidence', evidence, '--project-dir', '/tmp', '--session-id', `kimi-wire-runtime-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          env: { ...process.env, BUDDY_KIMI_BIN: fakeKimi, BUDDY_HOME: tmpHome },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.provider, 'kimi');
+      assert.equal(json.transport, 'wire');
+      assert.equal(json.runtime, 'wire');
+      assert.match(json.evidence_summary[0], /runtime wire final/);
+      assert.ok(json.events_count >= 3);
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(fakeKimi, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action probe with kimi can force legacy exec transport', () => {
+    const evidence = path.join(os.tmpdir(), `kimi-exec-runtime-${Date.now()}.txt`);
+    const fakeKimi = path.join(os.tmpdir(), `fake-kimi-exec-runtime-${Date.now()}.mjs`);
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-kimi-exec-runtime-'));
+    fs.writeFileSync(evidence, 'task_to_judge: kimi exec runtime\nraw_evidence: x\nknown_omissions: none\n');
+    fs.writeFileSync(fakeKimi, `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  console.log('kimi, version fake');
+  process.exit(0);
+}
+console.log('runtime exec final');
+`);
+    fs.chmodSync(fakeKimi, 0o755);
+    try {
+      const r = spawnSync(
+        process.execPath,
+        [RUNTIME, '--action', 'probe', '--buddy-model', 'kimi',
+         '--evidence', evidence, '--project-dir', '/tmp', '--session-id', `kimi-exec-runtime-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          env: { ...process.env, BUDDY_KIMI_BIN: fakeKimi, BUDDY_KIMI_TRANSPORT: 'exec', BUDDY_HOME: tmpHome },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.transport, 'exec');
+      assert.match(json.evidence_summary[0], /runtime exec final/);
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(fakeKimi, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
 

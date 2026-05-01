@@ -13,6 +13,7 @@ import {
   trimPrompt,
 } from './codex-adapter.mjs';
 import { execKimi, preflight as kimiPreflight } from './kimi-adapter.mjs';
+import { runKimiWireTurn } from './kimi-wire-client.mjs';
 import { runAppServerTurn } from './codex-app-server.mjs';
 import {
   spawnBroker,
@@ -36,6 +37,7 @@ const PROVIDERS = {
       transports: ['broker', 'app-server', 'exec'],
       supportsThread: true,
       supportsResume: true,
+      supportsFollowup: true,
       supportsCancel: false,
       supportsStreaming: true,
       outputMode: 'events',
@@ -50,21 +52,23 @@ const PROVIDERS = {
       };
     },
     startTurn: startCodexTurn,
+    followupTurn: followupCodexTurn,
   },
   kimi: {
     name: 'kimi',
     displayName: 'Kimi',
-    transports: ['exec'],
+    transports: ['wire', 'exec'],
     supportsFreshThread: false,
     supportsFollowup: false,
     capabilities: {
       name: 'kimi',
-      transports: ['exec'],
-      supportsThread: false,
+      transports: ['wire', 'exec'],
+      supportsThread: true,
       supportsResume: false,
-      supportsCancel: false,
-      supportsStreaming: false,
-      outputMode: 'final-message',
+      supportsFollowup: false,
+      supportsCancel: true,
+      supportsStreaming: true,
+      outputMode: 'events',
     },
     preflight() {
       const kimi = kimiPreflight();
@@ -79,6 +83,7 @@ const PROVIDERS = {
       };
     },
     startTurn: startKimiTurn,
+    followupTurn: followupKimiTurn,
   },
 };
 
@@ -114,13 +119,57 @@ async function startKimiTurn({
     );
   }
   const startedAt = Date.now();
+  const transport = normalizeKimiTransport(process.env.BUDDY_KIMI_TRANSPORT);
+  if (transport === 'wire') {
+    try {
+      process.stderr.write('[buddy] kimi wire probe started, ETA 30-80s\n');
+      const wire = await runKimiWireTurn(prompt, { projectDir, timeoutMs });
+      const latencyMs = Date.now() - startedAt;
+      process.stderr.write(`[buddy] kimi wire probe completed in ${latencyMs}ms\n`);
+      return {
+        ...wire,
+        latencyMs,
+        events: [
+          { type: 'provider_event', subtype: 'turn/started', payload: { provider: 'kimi', transport: 'wire' } },
+          ...(wire.events || []),
+          { type: 'provider_event', subtype: 'turn/completed', payload: { provider: 'kimi', transport: 'wire' } },
+        ],
+      };
+    } catch (err) {
+      if (!shouldFallbackFromKimiWireError(err)) throw err;
+      process.stderr.write(`[buddy] kimi wire failed, falling back to exec: ${err.message}\n`);
+      return startKimiExecTurn({ prompt, projectDir, model, timeoutMs, fallback: 'wire-to-exec', startedAt });
+    }
+  }
+
+  return startKimiExecTurn({ prompt, projectDir, model, timeoutMs, fallback: 'none', startedAt });
+}
+
+function startKimiExecTurn({
+  prompt,
+  projectDir,
+  model = null,
+  timeoutMs,
+  fallback = 'none',
+  startedAt = Date.now(),
+} = {}) {
   process.stderr.write('[buddy] kimi probe started, ETA 30-80s\n');
   const result = execKimi(prompt, { projectDir, model: model || undefined, timeoutMs });
   if (result.spawnError) {
-    throw Object.assign(new Error(`Kimi spawn error: ${result.spawnError}`), { code: 'kimi-spawn-failed' });
+    const timeout = result.errorCode === 'kimi-timeout' ? ` after ${result.timeoutMs}ms` : '';
+    throw Object.assign(
+      new Error(`Kimi spawn error${timeout}: ${result.spawnError} (bin=${result.bin}, cwd=${result.cwd})`),
+      { code: result.errorCode || 'kimi-spawn-failed' },
+    );
   }
   if (result.exitCode !== 0) {
-    const detail = (result.stderr || result.raw || '').trim().split('\n').filter(Boolean).slice(-3).join(' | ');
+    const detail = result.stderrTail || (result.stderr || result.raw || '').trim().split('\n').filter(Boolean).slice(-3).join(' | ');
+    if (result.errorCode === 'kimi-permission') {
+      throw Object.assign(
+        new Error(`Kimi permission error: ${detail} (bin=${result.bin}, cwd=${result.cwd})`),
+        { code: 'kimi-permission' },
+      );
+    }
     throw Object.assign(
       new Error(`Kimi exited with code ${result.exitCode}${detail ? `: ${detail}` : ''}`),
       { code: 'kimi-exit-failed' },
@@ -147,8 +196,15 @@ async function startKimiTurn({
     providerSessionId: result.parsed.sessionId,
     parseStatus: result.parseStatus,
     parserVersion: result.parserVersion,
-    fallback: result.parseStatus !== 'failed' ? 'none' : 'raw',
+    fallback: fallback === 'none'
+      ? (result.parseStatus !== 'failed' ? 'none' : 'raw')
+      : fallback,
     exitCode: result.exitCode,
+    errorCode: result.errorCode || null,
+    stderrTail: result.stderrTail || '',
+    timeoutMs: result.timeoutMs,
+    bin: result.bin,
+    cwd: result.cwd,
     latencyMs,
     events: [
       { type: 'provider_event', subtype: 'turn/started', payload: { provider: 'kimi' } },
@@ -157,6 +213,29 @@ async function startKimiTurn({
     ],
     think: result.parsed.think || [],
   };
+}
+
+function normalizeKimiTransport(value) {
+  const raw = String(value || 'wire').trim().toLowerCase();
+  if (raw === 'exec') return 'exec';
+  return 'wire';
+}
+
+function shouldFallbackFromKimiWireError(err) {
+  const code = err?.code || '';
+  return [
+    'kimi-wire-spawn-failed',
+    'kimi-wire-exit',
+    'kimi-wire-initialize-failed',
+    'kimi-wire-closed',
+  ].includes(code);
+}
+
+async function followupKimiTurn() {
+  throw Object.assign(
+    new Error('Kimi provider does not support follow-up resume yet; run a fresh probe or resume manually with kimi -r if you have a provider session id.'),
+    { code: 'kimi-followup-unsupported' },
+  );
 }
 
 async function startCodexTurn({
@@ -293,6 +372,45 @@ async function startCodexTurn({
     ephemeral,
     sessionPolicy,
     resumed: !!resumedSessionId,
+  };
+}
+
+async function followupCodexTurn({
+  prompt,
+  providerSessionId,
+  projectDir,
+} = {}) {
+  if (!providerSessionId) {
+    throw Object.assign(new Error('No Codex session ID available for follow-up.'), { code: 'codex-session-missing' });
+  }
+  if (process.env.BUDDY_STUB_CODEX !== '1' && !checkCodexAvailable()) {
+    throw Object.assign(new Error('Codex CLI not found'), { code: 'codex-unavailable' });
+  }
+
+  const startedAt = Date.now();
+  const outputFile = `/tmp/buddy-codex-followup-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.txt`;
+  const cmdSpec = buildResumeArgs({
+    sessionId: providerSessionId,
+    outputFile,
+    prompt,
+  });
+  await execCodex(cmdSpec);
+  const finalMessage = fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : '';
+  const latencyMs = Date.now() - startedAt;
+  return {
+    provider: 'codex',
+    model: 'codex',
+    transport: 'exec',
+    runtime: 'exec',
+    finalMessage,
+    providerSessionId,
+    codexSessionId: providerSessionId,
+    outputFile,
+    latencyMs,
+    events: [
+      { type: 'provider_event', subtype: 'followup/started', payload: { provider: 'codex', project_dir: projectDir || null } },
+      { type: 'provider_event', subtype: 'followup/completed', payload: { provider_session_id: providerSessionId } },
+    ],
   };
 }
 

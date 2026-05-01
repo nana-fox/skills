@@ -60,9 +60,9 @@ Gate 触发后：先 **local evidence**（grep/test/lint）→ 不够再 **buddy
 
 **默认证据传递：stdin**（不再写 `/tmp` 临时文件作为输入通道）：
 `echo "$evidence" | node ".../buddy-runtime.mjs" --action probe --evidence-stdin --project-dir "$PWD"`
-也支持 `--evidence <file>` 兼容形式。Codex provider 默认走官方 app-server/broker 事件协议；Kimi provider 走 CLI exec 并映射为同一套 provider events。runtime 自动把每次交互写入 `~/.buddy/sessions/<sid>.jsonl`（审计历史，不是实时通信通道；payload 默认 redacted，sha256+bytes 可校验；`BUDDY_AUDIT_RAW=1` 写 raw）。
+也支持 `--evidence <file>` 兼容形式。Codex provider 默认走官方 app-server/broker 事件协议；Kimi provider 默认走 `kimi --wire` JSON-RPC，exec 仅作 fallback，并映射为同一套 provider events。runtime 自动把每次交互写入 `~/.buddy/sessions/<sid>.jsonl`（审计历史，不是实时通信通道；payload 默认 redacted，sha256+bytes 可校验；`BUDDY_AUDIT_RAW=1` 写 raw）。
 
-**复用机制（不要混淆）：** `buddy_session_id` 只做审计；`--session-policy isolated|conversation` 只控 exec resume；`--fresh-thread` 只控 Codex broker thread（Kimi 是 exec-only）。
+**复用机制（不要混淆）：** `buddy_session_id` 只做审计；`--session-policy isolated|conversation` 只控 Codex exec resume；`--fresh-thread` 只控 Codex broker thread（Kimi 使用独立 provider transport）。
 
 probe 同决策最多 2 次（probe + follow-up）。耗时 30-80s，**必须 `run_in_background`**。
 
@@ -146,4 +146,4 @@ Codex 没有新发现 → 写 `no-op`，不编造。
 6. 不传 `--model`：默认不加 `--model`；仅用户明确要求时才传
 7. Codex Broker 默认启用：常驻 codex app-server，跨 probe 复用持久 thread；`--fresh-thread` 重置；启动失败会回退 exec，`BUDDY_USE_LEGACY_EXEC=1`/`BUDDY_USE_BROKER=0` 可强制 exec
 8. PreToolUse advisory：`rm -rf`/DROP/force-push/reset --hard 等破坏性 Bash 操作自动注入 codex-buddy 验证提醒（V3 floor rule）
-9. Kimi 路由：`--buddy-model kimi` 切换到 Kimi CLI（exec-only，无 `--fresh-thread`）；详见 [`references/kimi-cli.md`](./references/kimi-cli.md)
+9. Kimi 路由：`--buddy-model kimi` 切换到 Kimi CLI，默认 Wire transport，exec 仅作 fallback；详见 [`references/kimi-cli.md`](./references/kimi-cli.md)
