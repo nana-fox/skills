@@ -6,7 +6,7 @@
 ---
 
 ## skill_version
-v3.3.1
+v3.3.2
 
 ## health_status
 <!-- HEALTHY | NEEDS_TRIAGE | BLOCKED -->
@@ -15,10 +15,12 @@ HEALTHY
 ## confirmed_failures
 <!-- 格式: [F-ID] 描述 | 证据: <文件:行或讨论链接> | 状态: OPEN|FIXED -->
 [F-001] Kimi legacy/print-style review could produce empty output or protocol transcript that looked like a completed review | 证据: user screenshot 2026-05-02; skills/codex-buddy/scripts/lib/__tests__/kimi-wire-client.test.mjs | 状态: FIXED
+[F-002] Kimi Wire can stream thousands of non-text events for 120s while producing no review text, making the host agent appear blocked | 证据: ~/.buddy/sessions/buddy-a492dd94.jsonl vtask-mophbony-ac3a06af/vtask-mopgvkxk-cfc35552; skills/codex-buddy/scripts/lib/__tests__/kimi-wire-client.test.mjs | 状态: FIXED
 
 ## root_cause_hypotheses
 <!-- 格式: [H-ID] 假设 | 对应失败: <F-ID> -->
 [H-001] Kimi CLI legacy output is not a stable review transport; empty final output and noisy transcript must be classified before runtime can claim review success | 对应失败: F-001
+[H-002] Kimi Wire no-text event streams are provider no-progress failures; waiting for total timeout hides the actual state and creates avoidable customer friction | 对应失败: F-002
 
 ## work_queue
 <!-- 统一待办队列。done_when 必须是可由命令/文件验证的条件，不能是主观判断 -->
@@ -77,6 +79,15 @@ HEALTHY
   done_when: "verify-repo fails on STATUS/CHANGELOG version drift and enforces patch-only version increments"
   status: done
 
+- id: W-020
+  type: fix
+  title: Kimi wire no-progress recovery
+  source: user screenshot/logs 2026-05-03: Kimi wire probe streamed events for 120s with chunks=0 chars=0 and then timed out
+  impact: high
+  reversibility: safe
+  done_when: "fake Kimi wire streams non-text ContentPart events; runtime returns kimi-wire-no-progress with recoverable recovery_hint before total timeout; provider does not fallback to exec; default no-content timeout is at least 90000ms"
+  status: done
+
 ## selected_item
 <!-- 由 AI 从 work_queue 推导；不再人工填写 -->
 NONE
@@ -97,7 +108,7 @@ NONE
 
 ## selection_rationale
 <!-- Claude + Codex 综合选题的理由（一句话） -->
-W-019 closes the state/version drift found after W-018 and makes future version updates patch-only by gate.
+W-020 directly fixes the observed Kimi timeout/no-content failure path and turns it into a fast, diagnosable, recoverable provider result.
 
 ## operating_mode
 <!-- TRIAGE | ITERATE | VALIDATE | BLOCKED -->
@@ -112,4 +123,4 @@ NONE
 FIXED
 
 ## last_round_notes
-v3.3.1: W-019 trigger hardening state consistency landed. verify-repo now checks STATUS/CHANGELOG version drift and enforces patch-only version increments; STATUS skill_version now matches the latest CHANGELOG entry.
+v3.3.2: W-020 Kimi wire no-progress recovery landed. Kimi Wire now cancels and returns kimi-wire-no-progress when provider events arrive without review text for 90s, preserving fail-closed semantics while giving the host recoverable diagnostics and recovery_hint.

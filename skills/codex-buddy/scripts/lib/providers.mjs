@@ -124,7 +124,13 @@ async function startKimiTurn({
   if (transport === 'wire') {
     try {
       process.stderr.write('[buddy] kimi wire probe started, ETA 30-80s\n');
-      const wire = await runKimiWireTurn(prompt, { projectDir, timeoutMs, onEvent });
+      const noContentTimeoutMs = parsePositiveInt(process.env.BUDDY_KIMI_NO_CONTENT_TIMEOUT_MS);
+      const wire = await runKimiWireTurn(prompt, {
+        projectDir,
+        timeoutMs,
+        onEvent,
+        ...(noContentTimeoutMs ? { noContentTimeoutMs } : {}),
+      });
       const latencyMs = Date.now() - startedAt;
       process.stderr.write(`[buddy] kimi wire probe completed in ${latencyMs}ms\n`);
       return {
@@ -222,6 +228,12 @@ function normalizeKimiTransport(value) {
   const raw = String(value || 'wire').trim().toLowerCase();
   if (raw === 'exec') return 'exec';
   return 'wire';
+}
+
+function parsePositiveInt(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function shouldFallbackFromKimiWireError(err) {

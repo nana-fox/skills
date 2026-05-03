@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runKimiWireTurn } from '../kimi-wire-client.mjs';
+import { DEFAULT_NO_CONTENT_TIMEOUT_MS, runKimiWireTurn } from '../kimi-wire-client.mjs';
 
 function fakeWireScript(body) {
   const file = path.join(os.tmpdir(), `fake-kimi-wire-${Date.now()}-${Math.random().toString(16).slice(2)}.mjs`);
@@ -22,6 +22,10 @@ function withFakeKimi(bin, fn) {
     else process.env.BUDDY_KIMI_BIN = prevBin;
   }
 }
+
+test('default no-content timeout exceeds observed slow successful first-content latency', () => {
+  assert.equal(DEFAULT_NO_CONTENT_TIMEOUT_MS >= 90_000, true);
+});
 
 test('runKimiWireTurn collects event text and final result text', async () => {
   const fakeKimi = fakeWireScript(`
@@ -156,6 +160,85 @@ rl.on('line', (line) => {
   } finally {
     fs.rmSync(fakeKimi, { force: true });
     fs.rmSync(marker, { force: true });
+  }
+});
+
+test('runKimiWireTurn fails fast when wire streams events without review text', async () => {
+  const marker = path.join(os.tmpdir(), `kimi-wire-no-content-cancel-${Date.now()}-${Math.random().toString(16).slice(2)}.txt`);
+  const fakeKimi = fakeWireScript(`
+import fs from 'node:fs';
+import readline from 'node:readline';
+const marker = ${JSON.stringify(marker)};
+const rl = readline.createInterface({ input: process.stdin });
+function send(msg) { process.stdout.write(JSON.stringify(msg) + '\\n'); }
+let interval = null;
+rl.on('line', (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
+  if (msg.method === 'prompt') {
+    interval = setInterval(() => {
+      send({ jsonrpc: '2.0', method: 'event', params: { type: 'ContentPart', payload: { type: 'tool_call', name: 'noop' } } });
+    }, 5);
+  }
+  if (msg.method === 'cancel') {
+    clearInterval(interval);
+    fs.writeFileSync(marker, 'cancelled');
+    send({ jsonrpc: '2.0', id: msg.id, result: { ok: true } });
+  }
+});
+`);
+  try {
+    await assert.rejects(
+      () => withFakeKimi(fakeKimi, () => runKimiWireTurn('hello', {
+        projectDir: '/tmp',
+        timeoutMs: 1000,
+        noContentTimeoutMs: 50,
+        killGraceMs: 20,
+      })),
+      (err) => err.code === 'kimi-wire-no-progress'
+        && err.recoverable === true
+        && /no review text/i.test(err.message)
+        && err.eventsCount > 0
+        && err.contentChars === 0
+        && err.lastRawType === 'ContentPart',
+    );
+    assert.equal(fs.readFileSync(marker, 'utf8'), 'cancelled');
+  } finally {
+    fs.rmSync(fakeKimi, { force: true });
+    fs.rmSync(marker, { force: true });
+  }
+});
+
+test('runKimiWireTurn does not fail no-content timer after review text arrives', async () => {
+  const fakeKimi = fakeWireScript(`
+import readline from 'node:readline';
+const rl = readline.createInterface({ input: process.stdin });
+function send(msg) { process.stdout.write(JSON.stringify(msg) + '\\n'); }
+rl.on('line', (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
+  if (msg.method === 'prompt') {
+    send({ jsonrpc: '2.0', method: 'event', params: { type: 'TurnBegin', payload: { type: 'TurnBegin' } } });
+    setTimeout(() => {
+      send({ jsonrpc: '2.0', method: 'event', params: { type: 'ContentPart', payload: { type: 'text', text: 'streamed review' } } });
+    }, 20);
+    setTimeout(() => {
+      send({ jsonrpc: '2.0', id: msg.id, result: { text: 'final review' } });
+      process.exit(0);
+    }, 90);
+  }
+});
+`);
+  try {
+    const result = await withFakeKimi(fakeKimi, () => runKimiWireTurn('hello', {
+      projectDir: '/tmp',
+      timeoutMs: 1000,
+      noContentTimeoutMs: 50,
+    }));
+    assert.equal(result.finalMessage, 'final review');
+    assert.equal(result.events.some((event) => event.subtype === 'kimi/content'), true);
+  } finally {
+    fs.rmSync(fakeKimi, { force: true });
   }
 });
 

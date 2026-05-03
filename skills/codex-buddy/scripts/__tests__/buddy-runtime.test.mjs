@@ -888,6 +888,68 @@ rl.on('line', (line) => {
     }
   });
 
+  test('--action probe with kimi reports no-progress recovery details', () => {
+    const evidence = path.join(os.tmpdir(), `kimi-no-progress-runtime-${Date.now()}.txt`);
+    const fakeKimi = path.join(os.tmpdir(), `fake-kimi-no-progress-runtime-${Date.now()}.mjs`);
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-kimi-no-progress-runtime-'));
+    fs.writeFileSync(evidence, 'task_to_judge: kimi no progress\nraw_evidence: x\nknown_omissions: none\n');
+    fs.writeFileSync(fakeKimi, `#!/usr/bin/env node
+import fs from 'node:fs';
+import readline from 'node:readline';
+if (process.argv.includes('--version')) {
+  console.log('kimi, version fake');
+  process.exit(0);
+}
+const rl = readline.createInterface({ input: process.stdin });
+function send(msg) { process.stdout.write(JSON.stringify(msg) + '\\n'); }
+let interval = null;
+rl.on('line', (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') send({ jsonrpc: '2.0', id: msg.id, result: {} });
+  if (msg.method === 'prompt') {
+    interval = setInterval(() => {
+      send({ jsonrpc: '2.0', method: 'event', params: { type: 'ContentPart', payload: { type: 'tool_call', name: 'noop' } } });
+    }, 5);
+  }
+  if (msg.method === 'cancel') {
+    clearInterval(interval);
+    send({ jsonrpc: '2.0', id: msg.id, result: { ok: true } });
+  }
+});
+`);
+    fs.chmodSync(fakeKimi, 0o755);
+    try {
+      const r = spawnSync(
+        process.execPath,
+        [RUNTIME, '--action', 'probe', '--buddy-model', 'kimi',
+         '--evidence', evidence, '--project-dir', '/tmp', '--session-id', `kimi-no-progress-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          env: {
+            ...process.env,
+            BUDDY_KIMI_BIN: fakeKimi,
+            BUDDY_KIMI_NO_CONTENT_TIMEOUT_MS: '50',
+            BUDDY_HOME: tmpHome,
+          },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'error', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.rule, 'kimi-wire-no-progress');
+      assert.equal(json.recoverable, true);
+      assert.match(json.recovery_hint, /--buddy-model codex|retry Kimi/i);
+      assert.match(json.message, /no review text/);
+      assert.equal(json.content_chars, 0);
+      assert.ok(json.streamed_events > 0);
+      assert.equal(json.last_raw_type, 'ContentPart');
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(fakeKimi, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   test('--action probe with kimi can force legacy exec transport', () => {
     const evidence = path.join(os.tmpdir(), `kimi-exec-runtime-${Date.now()}.txt`);
     const fakeKimi = path.join(os.tmpdir(), `fake-kimi-exec-runtime-${Date.now()}.mjs`);

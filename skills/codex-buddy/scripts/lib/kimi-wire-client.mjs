@@ -2,16 +2,25 @@ import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+export const DEFAULT_NO_CONTENT_TIMEOUT_MS = 90_000;
 const DEFAULT_KILL_GRACE_MS = 1_000;
 const INITIALIZE_TIMEOUT_MS = 2_000;
 
 export async function runKimiWireTurn(prompt, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const noContentTimeoutMs = opts.noContentTimeoutMs ?? DEFAULT_NO_CONTENT_TIMEOUT_MS;
   const killGraceMs = opts.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
   const startedAt = Date.now();
   const proc = spawnKimiWire(opts.projectDir);
   const client = new WireClient(proc);
   const events = [];
+  const progress = {
+    eventsCount: 0,
+    contentChunks: 0,
+    contentChars: 0,
+    lastSubtype: null,
+    lastRawType: null,
+  };
   let finalMessage = '';
   let initialized = true;
 
@@ -20,6 +29,7 @@ export async function runKimiWireTurn(prompt, opts = {}) {
       const normalized = normalizeWireEvent(msg.params || {});
       if (normalized) {
         events.push(normalized);
+        recordWireProgress(progress, normalized);
         notifyEvent(opts.onEvent, normalized);
       }
       return;
@@ -37,6 +47,7 @@ export async function runKimiWireTurn(prompt, opts = {}) {
         },
       };
       events.push(event);
+      recordWireProgress(progress, event);
       notifyEvent(opts.onEvent, event);
       client.respondResult(msg.id, buildRejectedRequestResult(requestType, request));
     }
@@ -69,15 +80,19 @@ export async function runKimiWireTurn(prompt, opts = {}) {
     }
 
     const promptPromise = client.request('prompt', { user_input: prompt });
+    const cancelPrompt = async () => {
+      try { await client.request('cancel', {}, 500); } catch {}
+      setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch {}
+      }, killGraceMs).unref?.();
+    };
     const result = await requestWithCancelTimeout({
       promise: promptPromise,
       timeoutMs,
-      onTimeout: async () => {
-        try { await client.request('cancel', {}, 500); } catch {}
-        setTimeout(() => {
-          try { proc.kill('SIGKILL'); } catch {}
-        }, killGraceMs).unref?.();
-      },
+      noContentTimeoutMs,
+      progress,
+      onTimeout: cancelPrompt,
+      onNoContentTimeout: cancelPrompt,
     });
     finalMessage = extractText(result) || events
       .filter((event) => event.subtype === 'kimi/content')
@@ -267,6 +282,16 @@ function notifyEvent(handler, event) {
   try { handler(event); } catch {}
 }
 
+function recordWireProgress(progress, event) {
+  progress.eventsCount += 1;
+  progress.lastSubtype = event?.subtype || null;
+  progress.lastRawType = event?.payload?.raw_type || null;
+  if (event?.subtype === 'kimi/content') {
+    progress.contentChunks += 1;
+    progress.contentChars += String(event.payload?.text || '').length;
+  }
+}
+
 function buildRejectedRequestResult(type, request) {
   if (type === 'ApprovalRequest') {
     return {
@@ -319,17 +344,49 @@ function withTimeout(promise, timeoutMs, message) {
   ]).finally(() => clearTimeout(timer));
 }
 
-function requestWithCancelTimeout({ promise, timeoutMs, onTimeout }) {
-  let timer;
+function requestWithCancelTimeout({
+  promise,
+  timeoutMs,
+  noContentTimeoutMs,
+  progress,
+  onTimeout,
+  onNoContentTimeout,
+}) {
+  let totalTimer;
+  let noContentTimer;
+  const clearTimers = () => {
+    clearTimeout(totalTimer);
+    clearTimeout(noContentTimer);
+  };
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      timer = setTimeout(async () => {
+      totalTimer = setTimeout(async () => {
+        clearTimeout(noContentTimer);
         await onTimeout();
         reject(Object.assign(new Error(`kimi wire prompt timed out after ${timeoutMs}ms`), {
           code: 'kimi-wire-timeout',
         }));
       }, timeoutMs);
+      noContentTimer = setTimeout(async () => {
+        if ((progress?.contentChars || 0) > 0) return;
+        clearTimeout(totalTimer);
+        await onNoContentTimeout();
+        reject(Object.assign(
+          new Error(`Kimi wire emitted ${progress?.eventsCount || 0} events but no review text after ${noContentTimeoutMs}ms`),
+          {
+            code: 'kimi-wire-no-progress',
+            recoverable: true,
+            recoveryHint: 'Kimi wire emitted provider events but no review text. Treat this review as inconclusive, retry Kimi later, or run the same evidence with --buddy-model codex.',
+            eventsCount: progress?.eventsCount || 0,
+            contentChunks: progress?.contentChunks || 0,
+            contentChars: progress?.contentChars || 0,
+            lastSubtype: progress?.lastSubtype || null,
+            lastRawType: progress?.lastRawType || null,
+            noContentTimeoutMs,
+          },
+        ));
+      }, noContentTimeoutMs);
     }),
-  ]).finally(() => clearTimeout(timer));
+  ]).finally(clearTimers);
 }
