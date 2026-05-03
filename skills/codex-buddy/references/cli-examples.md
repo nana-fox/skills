@@ -11,25 +11,28 @@
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight --buddy-model codex
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight --buddy-model kimi
 
-# 默认形式：stdin 传 evidence（推荐，无 /tmp 临时文件）
-cat <<'EOF' | node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action probe \
-  --evidence-stdin --project-dir "$PWD"
+# 默认形式：file-first 传 evidence（推荐给大模型执行，避免裸 stdin 误用）
+mkdir -p .omc/state
+EVIDENCE_FILE=".omc/state/buddy-evidence-$(date +%s).txt"
+cat > "$EVIDENCE_FILE" <<'BUDDY_EVIDENCE_END'
 task_to_judge: ...
 [证据] ...
 [omissions] none
-EOF
-
-# 兼容形式：file 传 evidence（仍可用，等价行为）
+BUDDY_EVIDENCE_END
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action probe \
-  --evidence /tmp/buddy-evidence.txt --project-dir "$PWD"
+  --evidence "$EVIDENCE_FILE" --project-dir "$PWD"
+
+# stdin 形式：只在同一个命令中明确提供 pipe/heredoc 输入时使用
+cat "$EVIDENCE_FILE" | node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action probe \
+  --evidence-stdin --project-dir "$PWD"
 
 # Probe 多轮共享上下文（同一 verification task 内连续追问）
-echo "$EVIDENCE" | node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action probe \
-  --evidence-stdin --project-dir "$PWD" --session-policy conversation
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action probe \
+  --evidence "$EVIDENCE_FILE" --project-dir "$PWD" --session-policy conversation
 
 # Follow-up（独立动作，与 conversation 互补）
-echo "$EVIDENCE" | node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action followup \
-  --evidence-stdin --project-dir "$PWD"
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action followup \
+  --evidence "$EVIDENCE_FILE" --project-dir "$PWD"
 
 # Annotate（每次 probe 综合后必须）
 # 注意：
@@ -53,11 +56,16 @@ node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action replay --session-id buddy-
 - `--buddy-model kimi`：默认走 Wire transport（`kimi --wire`，流式 JSON-RPC，有 async timeout + cancel-before-kill）；Wire 失败时自动 fallback 到 exec。**不要直接调用 `kimi --quiet -p "..."`** — 无 timeout 保护，大 prompt 会挂死。详见 [`references/kimi-cli.md`](./kimi-cli.md)。不支持 `--fresh-thread` 或 Codex broker thread。
 - `buddy_session_id` 是审计 ID；`codex_session_id` 是 exec resume ID；broker `threadId` 属于 app-server namespace，不写入 exec session pointer。
 
+**输入通道规则：**
+- 大模型/自动化默认用 file-first：先写 evidence 文件，再传 `--evidence "$EVIDENCE_FILE"`。
+- `--evidence-stdin` 只能和同命令 pipe/heredoc 一起出现；不要把 evidence 写在上一条消息或“想象中的 stdin”里。
+- 出现 `stdin is a TTY` 或 `stdin produced empty evidence` 时，修正提示/调用为 file-first，不把失败归咎给用户。
+
 **会话事件日志：** runtime 自动把每次交互写入 `~/.buddy/sessions/<buddy-session-id>.jsonl`：
 - `probe.start` / `probe.provider_event` / `probe.provider_output` / `probe.synthesis` / `annotate` / `*.error`
 - 每行含 `payload`（默认 redacted）+ `payload_sha256` + `payload_bytes` + `redaction_policy`
 - 大于 256KiB 的 payload 转 `payload_ref`（外部文件，路径 `~/.buddy/sessions/<sid>.payloads/`）
-- 文件日志只做审计和 replay；agent 间实时交流优先走 provider 协议/CLI stdout，不通过文件轮询。
+- 文件日志只做审计和 replay；agent 间实时交流优先走 provider 协议/CLI stdout，不通过文件轮询。审计写入失败应降级为 warning，不阻塞 probe 主结果。
 
 **敏感信息 / Redaction**：
 - 默认 redact 模式覆盖：OpenAI sk-/sk-proj-/sk-svcacct-、Anthropic sk-ant-、GitHub ghp_/gho_/github_pat_、AWS AKIA、Slack xox[abprs]-、Stripe rk_/sk_、JWT、`Authorization: Bearer/Basic/Token`、env-style key=value（api_key/token/password/access_token/refresh_token/client_secret 等）

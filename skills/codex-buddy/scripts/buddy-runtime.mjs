@@ -145,7 +145,7 @@ function createProviderProgressReporter({ buddySessionId, verificationTaskId, pr
       if (now < stats.nextReportAt) return;
       stats.nextReportAt = now + 5_000;
       const elapsed = Math.round((now - startedAt) / 1000);
-      appendSessionEvent(buddySessionId, verificationTaskId, 'probe.provider_progress', {
+      appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'probe.provider_progress', {
         provider,
         events_count: stats.eventCount,
         content_chunks: stats.contentChunks,
@@ -161,6 +161,15 @@ function createProviderProgressReporter({ buddySessionId, verificationTaskId, pr
   };
 }
 
+function appendSessionEventBestEffort(buddySessionId, verificationTaskId, event, fields = {}, rawPayload = null) {
+  try {
+    return appendSessionEvent(buddySessionId, verificationTaskId, event, fields, rawPayload);
+  } catch (e) {
+    process.stderr.write(`[buddy] warning: session audit log write failed (${e.message.split('\n')[0]})\n`);
+    return null;
+  }
+}
+
 /**
  * Read evidence from --evidence (file path or "-" for stdin) or --evidence-stdin.
  * Returns { ok, prompt, source, error }.
@@ -168,16 +177,16 @@ function createProviderProgressReporter({ buddySessionId, verificationTaskId, pr
 async function loadEvidence(args) {
   const useStdin = args['evidence-stdin'] === 'true' || args.evidence === '-';
   if (useStdin) {
-    if (process.stdin.isTTY) {
-      return { ok: false, error: 'evidence-stdin requested but stdin is a TTY (no piped input)' };
+    if (process.stdin.isTTY || process.env.BUDDY_TEST_STDIN_TTY === '1') {
+      return { ok: false, error: 'evidence-stdin requested but stdin is a TTY (no piped input). Use file-first recovery: write evidence to a file and rerun with --evidence <file> --project-dir "$PWD".' };
     }
     const prompt = await readAllStdin();
-    if (!prompt.length) return { ok: false, error: 'stdin produced empty evidence' };
+    if (!prompt.length) return { ok: false, error: 'stdin produced empty evidence. Use file-first recovery: write evidence to a file and rerun with --evidence <file> --project-dir "$PWD".' };
     return { ok: true, prompt, source: 'stdin' };
   }
   const file = args.evidence;
   if (!file || !fs.existsSync(file)) {
-    return { ok: false, error: `Evidence not found: ${file || '<missing>'}. Pass --evidence <file> or --evidence-stdin.` };
+    return { ok: false, error: `Evidence not found: ${file || '<missing>'}. Use file-first: write evidence to a file and pass --evidence <file>. Use --evidence-stdin only with a real same-command pipe/heredoc.` };
   }
   return { ok: true, prompt: fs.readFileSync(file, 'utf8'), source: file };
 }
@@ -285,7 +294,7 @@ async function actionProbe(args) {
   const evidenceSource = ev.source;
   const sessionPolicy = args['session-policy'] === 'conversation' ? 'conversation' : 'isolated';
   const verificationTaskId = args['verification-task-id'] || newVerificationTaskId();
-  appendSessionEvent(buddySessionId, verificationTaskId, 'probe.start', {
+  appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'probe.start', {
     evidence_source: evidenceSource,
     project_dir: args['project-dir'],
     provider: buddyModel,
@@ -323,7 +332,7 @@ async function actionProbe(args) {
     const followupRecommended = buddyModel === 'codex' && hasQuestions(parsed, providerOutput);
 
     for (const event of turn.events || []) {
-      appendSessionEvent(buddySessionId, verificationTaskId, 'probe.provider_event', {
+      appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'probe.provider_event', {
         provider: turn.provider,
         transport: turn.transport,
         thread_id: turn.threadId || null,
@@ -333,7 +342,7 @@ async function actionProbe(args) {
     }
 
     if (turn.think?.length) {
-      appendSessionEvent(buddySessionId, verificationTaskId, 'probe.provider_think', {
+      appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'probe.provider_think', {
         provider: turn.provider,
         transport: turn.transport,
         provider_session_id: turn.providerSessionId || null,
@@ -362,7 +371,7 @@ async function actionProbe(args) {
       fallback: turn.fallback,
     });
 
-    appendSessionEvent(buddySessionId, verificationTaskId, 'probe.provider_output', {
+    appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'probe.provider_output', {
       provider: turn.provider,
       transport: turn.transport,
       runtime: turn.runtime,
@@ -429,7 +438,7 @@ async function actionProbe(args) {
     const progressMessage = progressStats.eventCount
       ? `; streamed_events=${progressStats.eventCount}, content_chunks=${progressStats.contentChunks}, content_chars=${progressStats.contentChars}, last_event=${progressStats.lastSubtype || 'unknown'}`
       : '';
-    appendSessionEvent(buddySessionId, verificationTaskId, 'probe.error', {
+    appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'probe.error', {
       message: `${e.message.split('\n')[0]}${progressMessage}`,
       provider: buddyModel,
       events_count: progressStats.eventCount,
@@ -443,6 +452,8 @@ async function actionProbe(args) {
       rule: e.code || `${buddyModel}-failed`,
       message: `${e.message.split('\n')[0]}${progressMessage}`,
       verification_task_id: verificationTaskId,
+      recoverable: e.recoverable === true || undefined,
+      recovery_hint: e.recoveryHint || undefined,
       ...(progressStats.eventCount ? {
         streamed_events: progressStats.eventCount,
         content_chunks: progressStats.contentChunks,
@@ -519,7 +530,7 @@ async function actionFollowup(args) {
   const startTime = Date.now();
   const verificationTaskId = args['verification-task-id'] || newVerificationTaskId();
   process.stderr.write(`[buddy] followup started, provider=${buddyModel}, sid=${buddySessionId}, provider_session=${providerSessionId.slice(0, 8)}, ETA 30-80s\n`);
-  appendSessionEvent(buddySessionId, verificationTaskId, 'followup.start', {
+  appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'followup.start', {
     evidence_source: ev.source,
     provider: buddyModel,
     provider_session_id: providerSessionId,
@@ -555,7 +566,7 @@ async function actionFollowup(args) {
       model: buddyModel,
     });
 
-    appendSessionEvent(buddySessionId, verificationTaskId, 'followup.provider_output', {
+    appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'followup.provider_output', {
       provider: turn.provider,
       transport: turn.transport,
       runtime: turn.runtime,
@@ -568,7 +579,7 @@ async function actionFollowup(args) {
     }, providerResult);
 
     if (turn.provider === 'codex') {
-      appendSessionEvent(buddySessionId, verificationTaskId, 'followup.codex_output', {
+      appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'followup.codex_output', {
         codex_session_id: turn.codexSessionId || turn.providerSessionId || providerSessionId,
         provider_session_id: turn.providerSessionId || providerSessionId,
         latency_ms: latencyMs,
@@ -597,7 +608,7 @@ async function actionFollowup(args) {
       call_count: getCallCount(logFilePath(), buddySessionId),
     });
   } catch (e) {
-    appendSessionEvent(buddySessionId, verificationTaskId, 'followup.error', {
+    appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'followup.error', {
       message: e.message.split('\n')[0],
       provider: buddyModel,
       provider_session_id: providerSessionId,
@@ -609,6 +620,8 @@ async function actionFollowup(args) {
       provider: buddyModel,
       message: e.message.split('\n')[0],
       verification_task_id: verificationTaskId,
+      recoverable: e.recoverable === true || undefined,
+      recovery_hint: e.recoveryHint || undefined,
     });
   }
 }
@@ -643,9 +656,9 @@ async function actionAnnotate(args) {
              message: 'No probe/followup found for this buddy session — nothing to annotate.' });
     return;
   }
-  appendSessionEvent(buddySessionId, taskId, 'annotate', fields);
+  const auditEvent = appendSessionEventBestEffort(buddySessionId, taskId, 'annotate', fields);
   output({ status: 'ok', session_id: buddySessionId, verification_task_id: taskId,
-           annotated: fields, message: 'Annotated session-log probe' });
+           annotated: fields, audit_logged: !!auditEvent, message: 'Annotated session-log probe' });
 }
 
 // Allow Claude to log synthesis (or any post-hoc note) into the buddy session log.
@@ -665,10 +678,10 @@ async function actionLogSynthesis(args) {
     output({ status: 'error', message: 'Empty synthesis content. Pass --content <file|->,  --content-stdin, or inline string.' });
     return;
   }
-  appendSessionEvent(buddySessionId, verificationTaskId, 'probe.synthesis', {
+  const auditEvent = appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'probe.synthesis', {
     note: args.note || null,
   }, content);
-  output({ status: 'ok', session_id: buddySessionId, verification_task_id: verificationTaskId, message: 'Synthesis logged' });
+  output({ status: 'ok', session_id: buddySessionId, verification_task_id: verificationTaskId, audit_logged: !!auditEvent, message: 'Synthesis logged' });
 }
 
 // W2: Self-evidence — let Claude echo a reply slice into session log for audit.
@@ -696,10 +709,10 @@ async function actionLogReply(args) {
     output({ status: 'error', message: 'Empty content. Pass --content <file|->, --content-stdin, or inline string.' });
     return;
   }
-  appendSessionEvent(buddySessionId, verificationTaskId, `reply.${kind}`, {
+  const auditEvent = appendSessionEventBestEffort(buddySessionId, verificationTaskId, `reply.${kind}`, {
     kind,
   }, content || '(empty)');
-  output({ status: 'ok', session_id: buddySessionId, verification_task_id: verificationTaskId, kind, message: 'Reply logged' });
+  output({ status: 'ok', session_id: buddySessionId, verification_task_id: verificationTaskId, kind, audit_logged: !!auditEvent, message: 'Reply logged' });
 }
 
 async function actionReplay(args) {

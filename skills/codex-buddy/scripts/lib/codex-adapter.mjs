@@ -71,6 +71,25 @@ export function buildResumeArgs({ sessionId, outputFile, prompt }) {
  */
 const DEFAULT_WATCHDOG_MS = 10 * 60 * 1000; // 10 minutes — complex probes with project reading can take 5min+
 
+export function classifyCodexExecError(error) {
+  const raw = String(error?.message || error || '');
+  if (/\bapproval\b.*\b(required|denied|needed|request)|user confirmation|requires approval/i.test(raw)) {
+    return {
+      kind: 'approval-required',
+      recoverable: true,
+      message: 'Codex requested approval. Prefer a less invasive evidence path first: read-only inspection, file-first evidence, or local evidence. Only ask the user once when the requested task truly requires writes/network/destructive access.',
+    };
+  }
+  if (/\b(sandbox|permission|EPERM|EACCES|Operation not permitted|Permission denied)\b/i.test(raw)) {
+    return {
+      kind: 'sandbox-permission',
+      recoverable: true,
+      message: 'Codex hit a sandbox/permission blocker. Keep the default read-only path when possible; reduce the probe to source/log evidence or ask for one scoped approval only if the user-requested verification cannot be done read-only.',
+    };
+  }
+  return { kind: 'unknown', recoverable: false, message: raw };
+}
+
 export function execCodex({ bin, args }, options = {}) {
   // Test-only stub: short-circuit codex execution. Used by stderr/UX tests
   // to avoid spawning real codex (30-80s) in CI.
@@ -137,6 +156,10 @@ export function execCodex({ bin, args }, options = {}) {
           ? errorLines.join(' | ')
           : stderrLines.slice(-3).join(' | ');
         const err = new Error(`codex exited with code ${code}: ${errorMsg}`);
+        const classified = classifyCodexExecError(err);
+        err.code = classified.kind === 'unknown' ? undefined : classified.kind;
+        err.recoverable = classified.recoverable;
+        err.recoveryHint = classified.message;
         err.stdout = stdout;
         err.stderr = stderr;
         reject(err);

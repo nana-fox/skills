@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildProbeArgs, buildResumeArgs, buildProbeCommand, buildResumeCommand,
-  parseSessionId, checkCodexAvailable,
+  parseSessionId, checkCodexAvailable, classifyCodexExecError,
 } from '../codex-adapter.mjs';
 
 describe('codex-adapter', () => {
@@ -99,5 +99,19 @@ some other stuff`;
   test('checkCodexAvailable returns boolean', () => {
     const available = checkCodexAvailable();
     assert.equal(typeof available, 'boolean');
+  });
+
+  test('classifyCodexExecError detects sandbox approval blockers', () => {
+    const err = classifyCodexExecError(new Error('approval required: command needs user confirmation'));
+    assert.equal(err.kind, 'approval-required');
+    assert.equal(err.recoverable, true);
+    assert.match(err.message, /less invasive/);
+  });
+
+  test('classifyCodexExecError detects sandbox permission blockers', () => {
+    const err = classifyCodexExecError(new Error('sandbox denied: EPERM operation not permitted'));
+    assert.equal(err.kind, 'sandbox-permission');
+    assert.equal(err.recoverable, true);
+    assert.match(err.message, /read-only/);
   });
 });

@@ -58,9 +58,8 @@ Gate 触发后：先 **local evidence**（grep/test/lint）→ 不够再 **buddy
 通过 `<SKILL_DIR>/scripts/buddy-runtime.mjs` 调度（base directory 见 skill 加载行）。
 完整 CLI 见 [`references/cli-examples.md`](./references/cli-examples.md)。
 
-**默认证据传递：stdin**（不再写 `/tmp` 临时文件作为输入通道）：
-`echo "$evidence" | node ".../buddy-runtime.mjs" --action probe --evidence-stdin --project-dir "$PWD"`
-也支持 `--evidence <file>` 兼容形式。Codex provider 默认走官方 app-server/broker 事件协议；Kimi provider 默认走 `kimi --wire` JSON-RPC，exec 仅作 fallback，并映射为同一套 provider events。runtime 自动把每次交互写入 `~/.buddy/sessions/<sid>.jsonl`（审计历史，不是实时通信通道；payload 默认 redacted，sha256+bytes 可校验；`BUDDY_AUDIT_RAW=1` 写 raw）。
+**默认证据传递：file-first。** 先写 evidence 文件（`.omc/state/buddy-evidence-<ts>.txt`，无 `.omc` 时用 `.buddy-evidence-<ts>.txt`），再调用 `node ".../buddy-runtime.mjs" --action probe --evidence <file> --project-dir "$PWD"`。`--evidence-stdin` 只允许同命令真实 pipe/heredoc（如 `cat <file> | node ... --evidence-stdin`）；TTY/empty stdin 是提示设计失败，改 file-first，不归咎用户。
+Codex provider 默认走官方 app-server/broker，`read-only` + `approval never`；遇 sandbox/approval 阻塞先改 local/file evidence 或缩小只读证据包，只有任务确实需要写/网/破坏性权限时才一次性向用户说明并请求授权。Kimi 默认走 `kimi --wire`。runtime 写 `~/.buddy/sessions/<sid>.jsonl` 仅作审计/replay；审计失败不得阻塞 probe 主结果。
 
 **复用机制（不要混淆）：** `buddy_session_id` 只做审计；`--session-policy isolated|conversation` 只控 Codex exec resume；`--fresh-thread` 只控 Codex broker thread（Kimi 使用独立 provider transport）。
 
@@ -140,7 +139,7 @@ Codex 没有新发现 → 写 `no-op`，不编造。
 
 1. 分歧 ≠ Codex 对，是"需要人工判断"的信号
 2. 禁止递归：Codex 结论不再交给 Codex 验证
-3. 沙盒：默认 `read-only`；升 `workspace-write` 前须告知用户
+3. 沙盒：默认 `read-only`；升 `workspace-write` 前先尝试低侵扰替代，仍必要时才告知用户
 4. 前置检查：首次调用前运行 `--action preflight`；provider 不可用 → `[blocked: buddy unavailable]`
 5. 证据脱敏：传原始证据前去除 secret/token/credential/cookie
 6. 不传 `--model`：默认不加 `--model`；仅用户明确要求时才传
