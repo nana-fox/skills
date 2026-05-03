@@ -387,6 +387,75 @@ describe('CLI: stdin evidence + replay + log-synthesis', () => {
     const json = JSON.parse(result);
     assert.equal(json.status, 'error');
     assert.match(json.message, /Evidence not found/);
+    assert.match(json.message, /file-first|--evidence <file>/);
+  });
+
+  test('--action probe with TTY stdin explains file-first recovery', () => {
+    const r = spawnSync(
+      'node',
+      [RUNTIME, '--action', 'probe', '--evidence-stdin', '--project-dir', '/tmp'],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+        env: { ...process.env, BUDDY_TEST_STDIN_TTY: '1' },
+      },
+    );
+    const json = JSON.parse(r.stdout);
+    assert.equal(json.status, 'error');
+    assert.match(json.message, /file-first/);
+    assert.match(json.message, /--evidence <file>/);
+  });
+
+  test('--action log-reply continues when session audit log cannot be written', () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-logreply-unwritable-'));
+    try {
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'log-reply', '--kind', 'vlevel-header',
+         '--content', 'V2[META] | test', '--session-id', `reply-unwritable-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          env: {
+            ...process.env,
+            BUDDY_HOME: tmpHome,
+            BUDDY_TEST_SESSION_APPEND_EPERM: '1',
+          },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'ok', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.audit_logged, false);
+      assert.match(r.stderr, /session audit log write failed/);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action annotate continues when session audit log cannot be written', () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-annotate-unwritable-'));
+    try {
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'annotate', '--probe-found-new', 'false',
+         '--verification-task-id', 'vtask-direct', '--session-id', `annotate-unwritable-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          env: {
+            ...process.env,
+            BUDDY_HOME: tmpHome,
+            BUDDY_TEST_SESSION_APPEND_EPERM: '1',
+          },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'ok', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.audit_logged, false);
+      assert.match(r.stderr, /session audit log write failed/);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 
   test('--action probe falls back to exec when broker startup is unavailable', () => {
@@ -415,6 +484,98 @@ describe('CLI: stdin evidence + replay + log-synthesis', () => {
       assert.equal(json.runtime, 'exec');
       assert.equal(json.broker_fallback, true);
       assert.match(json.broker_fallback_reason, /EPERM/);
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action probe continues when session audit log cannot be written', () => {
+    const evidence = path.join(os.tmpdir(), `audit-unwritable-${Date.now()}.txt`);
+    fs.writeFileSync(evidence, 'task_to_judge: audit failure should not block probe\nraw_evidence: x\nknown_omissions: none\n');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-audit-unwritable-'));
+    try {
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'probe', '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', `audit-unwritable-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 20000,
+          env: {
+            ...process.env,
+            BUDDY_STUB_CODEX: '1',
+            BUDDY_USE_LEGACY_EXEC: '1',
+            BUDDY_HOME: tmpHome,
+            BUDDY_TEST_SESSION_APPEND_EPERM: '1',
+          },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.match(r.stderr, /session audit log write failed/);
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action probe continues when summary audit log cannot be written', () => {
+    const evidence = path.join(os.tmpdir(), `summary-audit-unwritable-${Date.now()}.txt`);
+    fs.writeFileSync(evidence, 'task_to_judge: summary audit failure should not block probe\nraw_evidence: x\nknown_omissions: none\n');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-summary-audit-unwritable-'));
+    try {
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'probe', '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', `summary-audit-unwritable-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 20000,
+          env: {
+            ...process.env,
+            BUDDY_STUB_CODEX: '1',
+            BUDDY_USE_LEGACY_EXEC: '1',
+            BUDDY_HOME: tmpHome,
+            BUDDY_TEST_AUDIT_APPEND_EPERM: '1',
+          },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.audit_logged, false);
+      assert.match(r.stderr, /summary audit log write failed/);
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action probe continues when summary audit call count cannot be read', () => {
+    const evidence = path.join(os.tmpdir(), `summary-audit-read-${Date.now()}.txt`);
+    fs.writeFileSync(evidence, 'task_to_judge: summary audit read failure should not block probe\nraw_evidence: x\nknown_omissions: none\n');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-summary-audit-read-'));
+    try {
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'probe', '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', `summary-audit-read-${Date.now()}`],
+        {
+          encoding: 'utf8',
+          timeout: 20000,
+          env: {
+            ...process.env,
+            BUDDY_STUB_CODEX: '1',
+            BUDDY_USE_LEGACY_EXEC: '1',
+            BUDDY_HOME: tmpHome,
+            BUDDY_TEST_AUDIT_READ_EPERM: '1',
+          },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.call_count, null);
+      assert.match(r.stderr, /summary audit log read failed/);
     } finally {
       fs.rmSync(evidence, { force: true });
       fs.rmSync(tmpHome, { recursive: true, force: true });
@@ -491,6 +652,49 @@ describe('CLI: stdin evidence + replay + log-synthesis', () => {
       const log = fs.readFileSync(path.join(tmpHome, 'sessions', `${sid}.jsonl`), 'utf8');
       assert.match(log, /"event":"followup\.provider_output"/);
       assert.match(log, /"event":"followup\.codex_output"/);
+    } finally {
+      if (prevHome === undefined) delete process.env.BUDDY_HOME;
+      else process.env.BUDDY_HOME = prevHome;
+      fs.rmSync(evidence, { force: true });
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('--action followup continues when summary audit log cannot be written', async () => {
+    const { appendSessionEvent } = await import('../lib/session-log.mjs');
+    const evidence = path.join(os.tmpdir(), `summary-audit-followup-${Date.now()}.txt`);
+    fs.writeFileSync(evidence, 'task_to_judge: followup summary audit failure\nraw_evidence: x\nknown_omissions: none\n');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-summary-audit-followup-'));
+    const sid = `summary-audit-followup-${Date.now()}`;
+    const taskId = 'vtask-summary-audit-followup';
+    const codexSessionId = '019d318f-abcd-7890-1234-567890abcdef';
+    const prevHome = process.env.BUDDY_HOME;
+    try {
+      process.env.BUDDY_HOME = tmpHome;
+      appendSessionEvent(sid, taskId, 'probe.provider_output', {
+        provider: 'codex',
+        codex_session_id: codexSessionId,
+      }, '{"verdict":"proceed"}');
+
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'followup', '--evidence', evidence, '--project-dir', '/tmp',
+         '--session-id', sid, '--verification-task-id', taskId],
+        {
+          encoding: 'utf8',
+          timeout: 20000,
+          env: {
+            ...process.env,
+            BUDDY_STUB_CODEX: '1',
+            BUDDY_HOME: tmpHome,
+            BUDDY_TEST_AUDIT_APPEND_EPERM: '1',
+          },
+        },
+      );
+      const json = JSON.parse(r.stdout);
+      assert.equal(json.status, 'verified', `stdout=${r.stdout} stderr=${r.stderr}`);
+      assert.equal(json.audit_logged, false);
+      assert.match(r.stderr, /summary audit log write failed/);
     } finally {
       if (prevHome === undefined) delete process.env.BUDDY_HOME;
       else process.env.BUDDY_HOME = prevHome;

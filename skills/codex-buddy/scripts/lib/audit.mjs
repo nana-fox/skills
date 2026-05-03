@@ -56,6 +56,11 @@ export function appendLog(logFile, opts) {
   if (!opts || typeof opts !== 'object') {
     throw new TypeError('appendLog: options object required');
   }
+  if (process.env.BUDDY_TEST_AUDIT_APPEND_EPERM === '1') {
+    const err = new Error('EACCES: permission denied, open logs.jsonl');
+    err.code = 'EACCES';
+    throw err;
+  }
   const { envelope, buddySessionId, workspace, action, verificationTaskId,
           latencyMs, message, model, parseStatus, fallback } = opts;
 
@@ -95,6 +100,11 @@ function entrySessionId(entry) {
 }
 
 export function getCallCount(logFile, buddySessionId) {
+  if (process.env.BUDDY_TEST_AUDIT_READ_EPERM === '1') {
+    const err = new Error('EACCES: permission denied, read logs.jsonl');
+    err.code = 'EACCES';
+    throw err;
+  }
   if (!fs.existsSync(logFile)) return 0;
 
   const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n').filter(Boolean);

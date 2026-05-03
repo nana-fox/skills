@@ -9,8 +9,15 @@
 
 ```bash
 # Run Kimi probe (instead of default Codex)
-echo "$EVIDENCE" | node "<SKILL_DIR>/scripts/buddy-runtime.mjs" \
-  --action probe --buddy-model kimi --evidence-stdin --project-dir "$PWD"
+mkdir -p .omc/state
+EVIDENCE_FILE=".omc/state/buddy-kimi-evidence-$(date +%s).txt"
+cat > "$EVIDENCE_FILE" <<'BUDDY_EVIDENCE_END'
+task_to_judge: ...
+raw_evidence: ...
+known_omissions: none
+BUDDY_EVIDENCE_END
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" \
+  --action probe --buddy-model kimi --evidence "$EVIDENCE_FILE" --project-dir "$PWD"
 
 # Preflight check (verify Kimi is available)
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight --buddy-model kimi
@@ -19,22 +26,28 @@ node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight --buddy-model ki
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight
 ```
 
-### 多行证据传递（heredoc 注意事项）
+### 多行证据传递（file-first 注意事项）
 
-当证据包含多行内容或需要 shell 变量展开时，使用**不加引号**的 heredoc 分隔符：
+大模型/自动化默认先写 evidence 文件，再用 `--evidence "$EVIDENCE_FILE"`。只有在同一个命令中明确 pipe 文件内容时，才使用 `--evidence-stdin`。
+
+当证据包含多行内容或需要 shell 变量展开时，使用不加引号的 heredoc 分隔符写入文件：
 
 ```bash
-# ✅ 正确：不加引号的 EOF，$() 和变量会展开
+# 正确：不加引号的 EOF，$() 和变量会展开；probe 使用 file-first
 EVIDENCE_FILE=$(mktemp)
 cat > "$EVIDENCE_FILE" << EOF
 task_to_judge: $(your_task_description)
 $(cat /path/to/diff.txt)
 known_omissions: none
 EOF
+node "<SKILL_DIR>/scripts/buddy-runtime.mjs" \
+  --action probe --buddy-model kimi --evidence "$EVIDENCE_FILE" --project-dir "$PWD"
+
+# 也可用 stdin，但必须同命令真实 pipe，不允许裸跑 --evidence-stdin
 cat "$EVIDENCE_FILE" | node "<SKILL_DIR>/scripts/buddy-runtime.mjs" \
   --action probe --buddy-model kimi --evidence-stdin --project-dir "$PWD"
 
-# ❌ 错误：加引号的 'EOF'，$() 不展开，Kimi 收到字面量路径然后试图执行 shell 命令
+# 错误：加引号的 'EOF'，$() 不展开，Kimi 收到字面量路径然后试图执行 shell 命令
 cat > "$EVIDENCE_FILE" << 'EOF'
 $(cat /path/to/diff.txt)   # ← Kimi 看到的是这个字面量，不是内容
 EOF

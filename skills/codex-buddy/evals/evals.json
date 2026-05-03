@@ -175,6 +175,12 @@
       "prompt": "用 Codex 验证这段代码，我想指定用 gpt-5.4 模型",
       "expected_output": "用户明确要求具体模型，生成的 codex exec 命令包含 --model gpt-5.4；这是唯一允许传 --model 的场景",
       "tags": ["model-flag-allowed", "probe-execution", "user-explicit-request"]
+    },
+    {
+      "id": 30,
+      "prompt": "Codex probe 因为 sandbox 需要授权卡住了，怎么继续？",
+      "expected_output": "回复开头标注 V2，先选择低侵扰恢复路径：local evidence、file-first evidence、缩小为 read-only 证据包；不得静默升级权限，只有用户请求的验证确实必须写/联网/破坏性操作时才一次性说明并请求授权",
+      "tags": ["sandbox-approval", "low-intrusion-recovery", "boundary-stop", "v-level-header"]
     }
   ]
 }

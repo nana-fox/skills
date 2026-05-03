@@ -85,6 +85,11 @@ function buildPayloadFields(buddySessionId, raw) {
  * @param {string|object|null} rawPayload — large blob; will be redacted unless BUDDY_AUDIT_RAW=1
  */
 export function appendSessionEvent(buddySessionId, verificationTaskId, event, fields = {}, rawPayload = null) {
+  if (process.env.BUDDY_TEST_SESSION_APPEND_EPERM === '1') {
+    const err = new Error('EPERM: operation not permitted, open session log');
+    err.code = 'EPERM';
+    throw err;
+  }
   ensureDir();
   const file = sessionFile(buddySessionId);
   const payloadFields = buildPayloadFields(buddySessionId, rawPayload);
