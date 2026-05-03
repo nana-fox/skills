@@ -170,6 +170,25 @@ function appendSessionEventBestEffort(buddySessionId, verificationTaskId, event,
   }
 }
 
+function appendAuditLogBestEffort(logFile, opts) {
+  try {
+    appendLog(logFile, opts);
+    return true;
+  } catch (e) {
+    process.stderr.write(`[buddy] warning: summary audit log write failed (${e.message.split('\n')[0]})\n`);
+    return false;
+  }
+}
+
+function getCallCountBestEffort(logFile, buddySessionId) {
+  try {
+    return getCallCount(logFile, buddySessionId);
+  } catch (e) {
+    process.stderr.write(`[buddy] warning: summary audit log read failed (${e.message.split('\n')[0]})\n`);
+    return null;
+  }
+}
+
 /**
  * Read evidence from --evidence (file path or "-" for stdin) or --evidence-stdin.
  * Returns { ok, prompt, source, error }.
@@ -207,7 +226,7 @@ async function actionPreflight(args) {
     ...provider.preflight(),
     transports: provider.transports,
     supports_fresh_thread: provider.supportsFreshThread,
-    call_count: buddySessionId ? getCallCount(logFilePath(), buddySessionId) : 0,
+    call_count: buddySessionId ? getCallCountBestEffort(logFilePath(), buddySessionId) : 0,
   });
 }
 
@@ -243,7 +262,7 @@ async function actionLocal(args) {
 
   const latencyMs = Date.now() - startTime;
   const localTaskId = newVerificationTaskId();
-  appendLog(logFilePath(), {
+  const auditLogged = appendAuditLogBestEffort(logFilePath(), {
     envelope,
     buddySessionId,
     workspace: args['project-dir'],
@@ -261,7 +280,8 @@ async function actionLocal(args) {
     conclusion: envelope.conclusion,
     unverified: envelope.unverified,
     session_id: buddySessionId,
-    call_count: getCallCount(logFilePath(), buddySessionId),
+    audit_logged: auditLogged,
+    call_count: getCallCountBestEffort(logFilePath(), buddySessionId),
   });
 }
 
@@ -359,7 +379,7 @@ async function actionProbe(args) {
     });
 
     const latencyMs = Date.now() - startTime;
-    appendLog(logFilePath(), {
+    const auditLogged = appendAuditLogBestEffort(logFilePath(), {
       envelope,
       buddySessionId,
       workspace: args['project-dir'],
@@ -424,7 +444,8 @@ async function actionProbe(args) {
       resumed: !!turn.resumed,
       followup_available: buddyModel === 'codex' && !turn.ephemeral && !!turn.codexSessionId,
       followup_recommended: followupRecommended,
-      call_count: getCallCount(logFilePath(), buddySessionId),
+      audit_logged: auditLogged,
+      call_count: getCallCountBestEffort(logFilePath(), buddySessionId),
       parse_mode: parsed.mode,
       parse_status: turn.parseStatus,
       fallback: turn.fallback,
@@ -556,7 +577,7 @@ async function actionFollowup(args) {
     });
 
     const latencyMs = Date.now() - startTime;
-    appendLog(logFilePath(), {
+    const auditLogged = appendAuditLogBestEffort(logFilePath(), {
       envelope,
       buddySessionId,
       workspace: args['project-dir'],
@@ -605,7 +626,8 @@ async function actionFollowup(args) {
       verification_task_id: verificationTaskId,
       provider_session_id: turn.providerSessionId || providerSessionId,
       codex_session_id: turn.codexSessionId || (turn.provider === 'codex' ? (turn.providerSessionId || providerSessionId) : null),
-      call_count: getCallCount(logFilePath(), buddySessionId),
+      audit_logged: auditLogged,
+      call_count: getCallCountBestEffort(logFilePath(), buddySessionId),
     });
   } catch (e) {
     appendSessionEventBestEffort(buddySessionId, verificationTaskId, 'followup.error', {

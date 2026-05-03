@@ -8,13 +8,14 @@
 
 ### Content
 - **`SKILL.md` / references**：默认 evidence 通道改为 file-first；`--evidence-stdin` 只允许同命令真实 pipe/heredoc，TTY/empty stdin 明确视为提示设计失败并提示 file-first 恢复。
-- **`buddy-runtime.mjs`**：probe/followup/annotate/log-synthesis/log-reply 的 session audit 写入改为 best-effort；审计日志失败只输出 warning，不阻塞主结果。
+- **`buddy-runtime.mjs`**：probe/followup/annotate/log-synthesis/log-reply 的 session audit 写入改为 best-effort；probe/followup/local 的 summary audit `logs.jsonl` 也改为 best-effort 并输出 `audit_logged`；审计日志失败只输出 warning，不阻塞主结果。
 - **`codex-adapter.mjs`**：识别 `approval-required` / `sandbox-permission` 类 Codex exec 错误，返回 recoverable recovery hint，优先引导 local/file evidence 或 read-only 证据包。
 - **`evals.json`**：新增 sandbox approval 低侵扰恢复用例，防止后续提示回退到静默升权或反复打扰用户。
 
 ### 架构决策
-- Codex probe 默认保持 `read-only` + `approval never`；遇授权阻塞先自动降级证据路径，只有用户目标确实需要写/联网/破坏性权限时才一次性请求授权。
-- `~/.buddy/sessions/<sid>.jsonl` 是审计/replay 辅助通道，不是主通信路径；审计不可用不得阻塞 review。
+- Codex probe 默认保持 `read-only` + `approval never`；遇授权阻塞返回 recoverable recovery hint，引导调用侧改用 local/file evidence 或缩小只读证据包，只有用户目标确实需要写/联网/破坏性权限时才一次性请求授权。
+- AI 工具对接中的提示、输入、provider、沙箱/授权、日志落盘摩擦都属于本项目兜底范围；默认引导到 file-first/local/read-only 证据路径，不能把阻塞转嫁给客户。
+- `~/.buddy/sessions/<sid>.jsonl` 与 `~/.buddy/logs.jsonl` 是审计/replay 辅助通道，不是主通信路径；审计不可用不得阻塞 review。
 
 ---
 

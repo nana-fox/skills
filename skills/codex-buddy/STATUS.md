@@ -103,4 +103,4 @@ NONE
 FIXED
 
 ## last_round_notes
-v3.2.2: file-first evidence guidance hardened; TTY/empty stdin now points to --evidence <file>; session audit writes are best-effort across probe/followup/annotate/reply; Codex sandbox/approval errors are classified as recoverable with low-intrusion recovery hints. verify-repo, runtime tests, codex-adapter tests, diff check, and verify-install passed.
+v3.2.2: file-first evidence guidance hardened; TTY/empty stdin now points to --evidence <file>; session and summary audit writes/reads are best-effort across probe/followup/annotate/reply; AI-tool/provider/sandbox/logging friction is treated as this project runtime/prompt responsibility; Codex sandbox/approval errors are classified as recoverable with low-intrusion recovery hints. Runtime tests, audit tests, codex-adapter tests, verify-repo, diff check, sync-skill, verify-install, and installed-runtime audit read/write failure smokes passed after the latest review fixes.
