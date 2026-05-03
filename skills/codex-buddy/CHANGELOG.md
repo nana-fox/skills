@@ -4,6 +4,22 @@
 
 ---
 
+## v3.3.0 — 2026-05-03 Replayable active-buddy evals
+
+### Content
+- **`reply-assessor.mjs` / `buddy-runtime.mjs`**：新增 `--action assess-reply`，可检查 V-level header、probe 触发、低侵扰 sandbox recovery、未验证标注等协议遵守情况。
+- **`evals/replay-evals.mjs`**：新增可回放 eval runner，读取 `evals.json` 的 machine-checkable `assertions`，输出 total/asserted/pass/fail/skip/failures。
+- **`evals.json`**：为 5 条高价值用例补 `assertions` 和 `expected_reply`，覆盖工具属性和 active buddy 关键风险。
+- **`verify-repo.sh`**：新增 replay evals gate，防止 evals 只停留在自然语言期望。
+- **`buddy-runtime.mjs`**：`--project-dir` 缺省时自动使用当前工作目录，减少主 agent/其他 AI 工具因少传参数产生的无意义阻塞。
+
+### 架构决策
+- active buddy 先做“策略注入 + advisory hook + 可回放审计”，不做强制后台拦截。
+- 旧 eval 用例保持兼容；没有 `assertions` 的用例会被 runner 计入 skipped，不阻塞。
+- 先覆盖最关键行为：V-level、该 probe 时 probe、不该 probe 时不 probe、V1 未验证标注、sandbox 低侵扰恢复。
+
+---
+
 ## v3.2.2 — 2026-05-03 Low-intrusion probe recovery
 
 ### Content

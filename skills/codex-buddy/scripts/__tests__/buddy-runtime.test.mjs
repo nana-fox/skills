@@ -60,13 +60,14 @@ describe('buddy-runtime CLI', () => {
     assert.ok(['verified', 'blocked', 'error', 'skipped'].includes(json.status));
   });
 
-  test('missing --project-dir returns error', () => {
+  test('missing --project-dir defaults to cwd', () => {
     const result = execSync(
       `node "${RUNTIME}" --action local`,
       { encoding: 'utf8', timeout: 10000 }
     );
     const json = JSON.parse(result);
-    assert.equal(json.status, 'error');
+    assert.equal(json.status, 'skipped');
+    assert.equal(json.route, 'local');
   });
 
   test('--action metrics returns stats without project-dir', () => {
@@ -82,6 +83,28 @@ describe('buddy-runtime CLI', () => {
     assert.ok('avg_latency_ms' in json);
     assert.ok('probe_found_new_rate' in json);
     assert.ok('user_adopted_rate' in json);
+  });
+
+  test('--action assess-reply reports assertion violations', () => {
+    const promptFile = path.join(os.tmpdir(), `assess-prompt-${Date.now()}.txt`);
+    const replyFile = path.join(os.tmpdir(), `assess-reply-${Date.now()}.txt`);
+    const assertionsFile = path.join(os.tmpdir(), `assess-assertions-${Date.now()}.json`);
+    fs.writeFileSync(promptFile, '这个方案怎么选？');
+    fs.writeFileSync(replyFile, '我建议走 A。');
+    fs.writeFileSync(assertionsFile, JSON.stringify({ vlevel_required: true, must_probe: true }));
+    try {
+      const result = execSync(
+        `node "${RUNTIME}" --action assess-reply --prompt ${promptFile} --reply ${replyFile} --assertions ${assertionsFile}`,
+        { encoding: 'utf8', timeout: 10000 }
+      );
+      const json = JSON.parse(result);
+      assert.equal(json.status, 'failed');
+      assert.deepEqual(json.violations.map(v => v.code), ['missing-vlevel-header', 'missing-probe']);
+    } finally {
+      fs.rmSync(promptFile, { force: true });
+      fs.rmSync(replyFile, { force: true });
+      fs.rmSync(assertionsFile, { force: true });
+    }
   });
 
   test('--action annotate missing fields returns error', () => {

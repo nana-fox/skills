@@ -6,6 +6,8 @@
 
 ## buddy-runtime 调用速查
 
+`--project-dir` 可省略，runtime 会默认使用当前工作目录；在多 worktree、跨目录调用或审计需要明确归属时仍建议显式传 `--project-dir "$PWD"`。
+
 ```bash
 # Provider preflight（默认 codex；kimi 默认 Wire，exec 仅作 fallback）
 node "<SKILL_DIR>/scripts/buddy-runtime.mjs" --action preflight --buddy-model codex

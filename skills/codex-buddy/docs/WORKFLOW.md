@@ -100,6 +100,16 @@ python -m scripts.run_loop \
 
 触发 eval 测试用例见 `evals/evals.json`。
 
+### 可回放 evals（W-018）
+
+`evals/evals.json` 支持可选 `assertions` 和 `expected_reply`。`expected_output` 继续给人读，`assertions` 给机器检查：
+
+```bash
+node evals/replay-evals.mjs --eval-set evals/evals.json
+```
+
+输出包含 `total/asserted/passed/failed/skipped/failures`。`verify-repo.sh` 会运行 replay evals，并要求至少有一条 assertion 被执行。
+
 ### 测试三层方法论（来自官方指南）
 
 | 层 | 目标 | 方法 |

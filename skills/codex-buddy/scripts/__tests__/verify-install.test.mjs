@@ -32,6 +32,7 @@ function makeSkillFixture() {
     'scripts/lib/providers.mjs',
     'schemas/envelope.schema.json',
     'hooks/session-start',
+    'evals/evals.json',
   ]) {
     writeFile(path.join(root, rel), `source ${rel}\n`);
   }
@@ -51,6 +52,7 @@ function installFixture(skillRoot, homeRoot) {
     'scripts/verify-install.sh',
     'schemas/envelope.schema.json',
     'hooks/session-start',
+    'evals/evals.json',
   ]) {
     writeFile(path.join(installRoot, rel), fs.readFileSync(path.join(skillRoot, rel), 'utf8'));
   }
@@ -71,6 +73,7 @@ test('verify-install checks managed runtime assets for codex host', () => {
     assert.match(r.stdout, /scripts\/buddy-runtime\.mjs 一致/);
     assert.match(r.stdout, /schemas\/envelope\.schema\.json 一致/);
     assert.match(r.stdout, /hooks\/session-start 一致/);
+    assert.match(r.stdout, /evals\/evals\.json 一致/);
     assert.match(r.stdout, /STATUS\.md 一致/);
     assert.match(r.stdout, /CHANGELOG\.md 一致/);
   } finally {

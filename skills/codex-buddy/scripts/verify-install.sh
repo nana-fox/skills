@@ -141,6 +141,7 @@ check_tree "references"
 check_tree "scripts"
 check_tree "schemas"
 check_tree "hooks"
+check_tree "evals"
 
 # ── 最终结果 ─────────────────────────────────────────────────
 if [ "$FAIL" -eq 0 ]; then

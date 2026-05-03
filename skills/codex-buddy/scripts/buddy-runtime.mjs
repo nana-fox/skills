@@ -30,6 +30,7 @@ import { collectEvidence } from './lib/local-evidence.mjs';
 import { createEnvelope } from './lib/envelope.mjs';
 import { appendLog, getCallCount } from './lib/audit.mjs';
 import { parseAnnotationFlags, ANNOTATION_FLAG_MAP } from './lib/annotations.mjs';
+import { assessReply } from './lib/reply-assessor.mjs';
 import { getStats } from './lib/metrics.mjs';
 import { appendSessionEvent, readSessionEvents, newVerificationTaskId } from './lib/session-log.mjs';
 import { getBuddyHome } from './lib/paths.mjs';
@@ -753,14 +754,32 @@ async function actionMetrics(args) {
   output({ status: 'ok', ...stats });
 }
 
+function readTextArg(args, key) {
+  const value = args[key];
+  if (!value || value === 'true') return null;
+  if (fs.existsSync(value)) return fs.readFileSync(value, 'utf8');
+  return value;
+}
+
+async function actionAssessReply(args) {
+  const prompt = readTextArg(args, 'prompt') || '';
+  const reply = readTextArg(args, 'reply') || '';
+  let assertions = {};
+  if (args.assertions && args.assertions !== 'true') {
+    const raw = fs.existsSync(args.assertions) ? fs.readFileSync(args.assertions, 'utf8') : args.assertions;
+    try {
+      assertions = JSON.parse(raw);
+    } catch (e) {
+      output({ status: 'error', message: `Invalid --assertions JSON: ${e.message}` });
+      return;
+    }
+  }
+  output(assessReply({ prompt, reply, assertions }));
+}
+
 async function main() {
   const args = parseArgs(process.argv);
 
-  const noProjectDirActions = ['preflight', 'annotate', 'metrics', 'log-synthesis', 'log-reply', 'replay'];
-  if (!args['project-dir'] && !noProjectDirActions.includes(args.action)) {
-    output({ status: 'error', message: 'Missing required --project-dir' });
-    return;
-  }
   if (!args['project-dir']) {
     args['project-dir'] = process.cwd();
   }
@@ -783,6 +802,9 @@ async function main() {
       break;
     case 'metrics':
       await actionMetrics(args);
+      break;
+    case 'assess-reply':
+      await actionAssessReply(args);
       break;
     case 'log-synthesis':
       await actionLogSynthesis(args);

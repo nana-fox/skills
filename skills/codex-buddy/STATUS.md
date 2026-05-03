@@ -66,7 +66,7 @@ HEALTHY
   impact: high
   reversibility: safe
   done_when: "evals include replayable trigger/verification-quality cases; command output reports pass/fail counts for those cases"
-  status: open
+  status: done
 
 ## selected_item
 <!-- 由 AI 从 work_queue 推导；不再人工填写 -->
@@ -88,7 +88,7 @@ NONE
 
 ## selection_rationale
 <!-- Claude + Codex 综合选题的理由（一句话） -->
-W-018 remains queued as the next evaluation-system improvement; current PR does not implement it.
+W-018 landed as the first replayable evaluation loop: evals can now carry machine-checkable assertions, replay-evals reports pass/fail counts, and verify-repo gates on asserted coverage.
 
 ## operating_mode
 <!-- TRIAGE | ITERATE | VALIDATE | BLOCKED -->
@@ -103,4 +103,4 @@ NONE
 FIXED
 
 ## last_round_notes
-v3.2.2: file-first evidence guidance hardened; TTY/empty stdin now points to --evidence <file>; session and summary audit writes/reads are best-effort across probe/followup/annotate/reply; AI-tool/provider/sandbox/logging friction is treated as this project runtime/prompt responsibility; Codex sandbox/approval errors are classified as recoverable with low-intrusion recovery hints. Runtime tests, audit tests, codex-adapter tests, verify-repo, diff check, sync-skill, verify-install, and installed-runtime audit read/write failure smokes passed after the latest review fixes.
+v3.3.0: W-018 replayable evaluation loop landed. Added assess-reply runtime checks, replay-evals runner, machine-checkable eval assertions for key active-buddy scenarios, and verify-repo gating on replay eval coverage. Runtime tests, reply-assessor tests, replay-evals tests, and verify-repo passed locally.

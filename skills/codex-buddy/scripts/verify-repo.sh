@@ -155,6 +155,26 @@ else
 fi
 echo ""
 
+echo "── replay evals ──"
+if [ -f "$SKILL_DIR/evals/replay-evals.mjs" ]; then
+  if node "$SKILL_DIR/evals/replay-evals.mjs" --eval-set "$SKILL_DIR/evals/evals.json" >/tmp/codex-buddy-replay-evals.out 2>/tmp/codex-buddy-replay-evals.err; then
+    ASSERTED=$(node -e "const r=require('fs').readFileSync('/tmp/codex-buddy-replay-evals.out','utf8'); const j=JSON.parse(r); process.stdout.write(String(j.asserted || 0));" 2>/dev/null || echo 0)
+    if [ "$ASSERTED" -gt 0 ]; then
+      pass "replay-evals passed (asserted=$ASSERTED)"
+    else
+      fail "replay-evals 没有执行任何 assertions"
+    fi
+  else
+    cat /tmp/codex-buddy-replay-evals.out 2>/dev/null || true
+    cat /tmp/codex-buddy-replay-evals.err 2>/dev/null || true
+    fail "replay-evals failed"
+  fi
+else
+  fail "evals/replay-evals.mjs MISSING"
+fi
+rm -f /tmp/codex-buddy-replay-evals.out /tmp/codex-buddy-replay-evals.err
+echo ""
+
 # ── 8. STATUS 状态机一致性 ──────────────────────────────────────
 echo "── STATUS 状态机一致性 ──"
 STATUS_FILE="$SKILL_DIR/STATUS.md"
