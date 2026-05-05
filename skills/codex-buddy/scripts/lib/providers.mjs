@@ -263,6 +263,7 @@ async function startCodexTurn({
   ephemeral: ephemeralArg = undefined,
   freshThread = false,
   startTime = Date.now(),
+  timeoutMs = undefined,
 } = {}) {
   if (process.env.BUDDY_STUB_CODEX !== '1' && !checkCodexAvailable()) {
     throw Object.assign(new Error('Codex CLI not found'), { code: 'codex-unavailable' });
@@ -313,6 +314,7 @@ async function startCodexTurn({
         outputSchema: outputSchemaObj,
         ephemeral,
         threadId: persistedThread,
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       finalMessage = r.finalMessage || '';
       codexSessionId = r.threadId || null;
@@ -330,7 +332,7 @@ async function startCodexTurn({
       brokerFallbackReason = brokerErr.message.split('\n')[0];
       transport = 'exec';
       process.stderr.write(`[buddy] broker unavailable, falling back to exec: ${brokerFallbackReason}\n`);
-      const execResult = await runCodexExec({ prompt, projectDir, model, outputSchema, ephemeral, startTime });
+      const execResult = await runCodexExec({ prompt, projectDir, model, outputSchema, ephemeral, startTime, timeoutMs });
       ({ finalMessage, codexSessionId, firstByteMs, outputFile } = execResult);
       events = [{ type: 'provider_event', subtype: 'transport/fallback', payload: { from: 'broker', to: 'exec', reason: brokerFallbackReason } }];
     }
@@ -342,6 +344,7 @@ async function startCodexTurn({
       model,
       outputSchema: outputSchemaObj,
       ephemeral,
+      ...(timeoutMs !== undefined ? { watchdogMs: timeoutMs } : {}),
     });
     finalMessage = r.finalMessage || '';
     codexSessionId = r.threadId || null;
@@ -357,6 +360,7 @@ async function startCodexTurn({
       ephemeral,
       startTime,
       resumedSessionId,
+      timeoutMs,
     });
     ({ finalMessage, codexSessionId, firstByteMs, outputFile } = execResult);
   }
@@ -442,6 +446,7 @@ async function runCodexExec({
   ephemeral,
   startTime,
   resumedSessionId = null,
+  timeoutMs = undefined,
 }) {
   let firstByteMs = null;
   const outputFile = `/tmp/buddy-codex-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.txt`;
@@ -457,6 +462,7 @@ async function runCodexExec({
       });
   const execOutput = await execCodex(cmdSpec, {
     onFirstByte: (ms) => { firstByteMs = ms; },
+    ...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
   });
   const codexSessionId = resumedSessionId
     || (ephemeral

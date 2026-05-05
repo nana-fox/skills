@@ -1,8 +1,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   buildProbeArgs, buildResumeArgs, buildProbeCommand, buildResumeCommand,
-  parseSessionId, checkCodexAvailable, classifyCodexExecError,
+  parseSessionId, checkCodexAvailable, classifyCodexExecError, execCodex,
 } from '../codex-adapter.mjs';
 
 describe('codex-adapter', () => {
@@ -113,5 +116,34 @@ some other stuff`;
     assert.equal(err.kind, 'sandbox-permission');
     assert.equal(err.recoverable, true);
     assert.match(err.message, /read-only/);
+  });
+
+  test('execCodex sends SIGKILL if process ignores SIGTERM', async () => {
+    const pidFile = path.join(os.tmpdir(), `buddy-test-sigkill-pid-${Date.now()}.txt`);
+    const fakeScript = path.join(os.tmpdir(), `buddy-test-sigkill-${Date.now()}.mjs`);
+    fs.writeFileSync(fakeScript, `
+import fs from 'node:fs';
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+process.on('SIGTERM', () => {}); // ignore SIGTERM
+setInterval(() => {}, 1_000_000);
+`);
+
+    try {
+      await assert.rejects(
+        () => execCodex({ bin: 'node', args: [fakeScript] }, { timeout: 100, sigkillDelayMs: 150 }),
+        /watchdog timeout/,
+      );
+
+      // Wait past sigkillDelayMs — process must be dead (SIGKILL sent)
+      await new Promise((r) => setTimeout(r, 300));
+
+      const pid = parseInt(fs.readFileSync(pidFile, 'utf8'), 10);
+      let alive = true;
+      try { process.kill(pid, 0); } catch { alive = false; }
+      assert.equal(alive, false, `Process ${pid} should be dead after SIGKILL escalation`);
+    } finally {
+      fs.rmSync(fakeScript, { force: true });
+      fs.rmSync(pidFile, { force: true });
+    }
   });
 });

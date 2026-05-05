@@ -276,6 +276,7 @@ function sleep(ms) {
 export async function runBrokerTurn(brokerPaths, {
   prompt, projectDir, model, outputSchema, ephemeral, threadId: existingThreadId,
   timeoutMs = 10 * 60 * 1000,
+  noContentTimeoutMs = undefined,
 } = {}) {
   const sock = await connectToBroker(brokerPaths, { timeoutMs: COMMAND_TIMEOUT_MS });
   return new Promise((resolve, reject) => {
@@ -287,14 +288,33 @@ export async function runBrokerTurn(brokerPaths, {
     let threadId = existingThreadId || null;
     const events = [];
     let settled = false;
+    let turnActive = false;
     const pending = new Map();
 
-    const watchdog = setTimeout(() => finish(reject, new Error('runBrokerTurn: timeout')), timeoutMs);
+    // P1: no-content timer — fires if no broker notification arrives within noContentTimeoutMs
+    let noContentTimer = null;
+    function resetNoContentTimer() {
+      if (!noContentTimeoutMs) return;
+      clearTimeout(noContentTimer);
+      noContentTimer = setTimeout(
+        () => finish(reject, new Error(`runBrokerTurn: no content received within ${noContentTimeoutMs}ms`)),
+        noContentTimeoutMs,
+      );
+    }
+
+    const watchdog = setTimeout(() => {
+      // P2a: best-effort turn/interrupt before closing socket
+      if (turnActive) {
+        try { sock.write(JSON.stringify({ id: nextId++, method: 'turn/interrupt', params: {} }) + '\n'); } catch {}
+      }
+      finish(reject, new Error('runBrokerTurn: timeout'));
+    }, timeoutMs);
 
     function finish(fn, val) {
       if (settled) return;
       settled = true;
       clearTimeout(watchdog);
+      clearTimeout(noContentTimer);
       try { sock.destroy(); } catch {}
       fn(val);
     }
@@ -327,6 +347,7 @@ export async function runBrokerTurn(brokerPaths, {
       // Notification (no id) — streaming output
       if (msg.id === undefined && msg.method) {
         if (firstByteAt === null) firstByteAt = Date.now();
+        resetNoContentTimer();
         events.push({
           type: 'provider_event',
           subtype: msg.method,
@@ -381,6 +402,8 @@ export async function runBrokerTurn(brokerPaths, {
         if (model) turnParams.model = model;
         if (outputSchema) turnParams.outputSchema = outputSchema;
         await request('turn/start', turnParams);
+        turnActive = true;
+        resetNoContentTimer();
         // Streaming notifications now flow until turn/completed
       } catch (err) {
         finish(reject, err);

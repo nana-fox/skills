@@ -1,4 +1,4 @@
-import { test, describe } from 'node:test';
+import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,6 +9,17 @@ import {
   normalizeProviderName,
   shouldFallbackFromBrokerError,
 } from '../providers.mjs';
+import { checkUnixSocketSupport } from '../../__tests__/helpers.mjs';
+
+const HANG_BIN = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  '..', '..', '__tests__', 'fixtures', 'codex-app-server-stub-hang.mjs',
+);
+
+let CAN_USE_UNIX_SOCKETS = false;
+before(async () => {
+  CAN_USE_UNIX_SOCKETS = await checkUnixSocketSupport('buddy-providers-socket-check');
+});
 
 function fakeProviderKimi(body) {
   const file = path.join(os.tmpdir(), `fake-provider-kimi-${Date.now()}-${Math.random().toString(16).slice(2)}.mjs`);
@@ -222,5 +233,43 @@ rl.on('line', (line) => {
     assert.equal(shouldFallbackFromBrokerError(new Error('spawnBroker: broker did not become reachable within 5000ms')), true);
     assert.equal(shouldFallbackFromBrokerError(new Error('turn/start failed: operation not permitted reading fixture')), false);
     assert.equal(shouldFallbackFromBrokerError(new Error('turn failed: model refused')), false);
+  });
+});
+
+describe('providers — codex startTurn timeout threading', () => {
+  test('codex startTurn respects timeoutMs via broker transport (hanging Codex)', async (t) => {
+    if (!CAN_USE_UNIX_SOCKETS) return t.skip('Unix sockets are unavailable in this sandbox');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-provider-timeout-'));
+    const projectDir = path.join(os.tmpdir(), 'buddy-provider-codex-timeout-' + Date.now());
+    fs.mkdirSync(projectDir, { recursive: true });
+    const prevHome = process.env.BUDDY_HOME;
+    const prevStub = process.env.BUDDY_STUB_CODEX;
+    const prevBin = process.env.BUDDY_BROKER_CODEX_BIN;
+    process.env.BUDDY_HOME = tmpHome;
+    process.env.BUDDY_STUB_CODEX = '1'; // bypass checkCodexAvailable
+    fs.chmodSync(HANG_BIN, 0o755);
+    process.env.BUDDY_BROKER_CODEX_BIN = HANG_BIN;
+    try {
+      const start = Date.now();
+      await assert.rejects(
+        () => getProvider('codex').startTurn({
+          prompt: 'test',
+          projectDir,
+          buddySessionId: 'test-session-timeout',
+          timeoutMs: 400,
+        }),
+        /timeout/i,
+      );
+      const elapsed = Date.now() - start;
+      assert.ok(elapsed < 2000, `Expected timeout within 2s, took ${elapsed}ms`);
+    } finally {
+      if (prevHome === undefined) delete process.env.BUDDY_HOME;
+      else process.env.BUDDY_HOME = prevHome;
+      if (prevStub === undefined) delete process.env.BUDDY_STUB_CODEX;
+      else process.env.BUDDY_STUB_CODEX = prevStub;
+      if (prevBin === undefined) delete process.env.BUDDY_BROKER_CODEX_BIN;
+      else process.env.BUDDY_BROKER_CODEX_BIN = prevBin;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 });

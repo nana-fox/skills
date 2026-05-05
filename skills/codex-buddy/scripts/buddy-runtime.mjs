@@ -425,6 +425,8 @@ async function actionProbe(args) {
     provider: buddyModel,
     startedAt: startTime,
   });
+  const _envTimeout = parseInt(process.env.BUDDY_PROBE_TIMEOUT_MS, 10);
+  const probeTimeoutMs = (_envTimeout > 0 ? _envTimeout : null) ?? 4 * 60 * 1000;
   try {
     const turn = await provider.startTurn({
       prompt,
@@ -437,6 +439,7 @@ async function actionProbe(args) {
       freshThread: args['fresh-thread'] === 'true',
       startTime,
       onEvent: buddyModel === 'kimi' ? progress.onEvent : null,
+      timeoutMs: probeTimeoutMs,
     });
     const providerOutput = turn.finalMessage || '';
     const parsed = buddyModel === 'codex'

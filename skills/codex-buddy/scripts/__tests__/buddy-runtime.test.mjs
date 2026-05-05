@@ -1329,4 +1329,46 @@ describe('session policy helpers', () => {
       fs.rmSync(`${process.env.HOME}/.codex/sessions/2099`, { recursive: true, force: true });
     }
   });
+
+  test('--action probe respects BUDDY_PROBE_TIMEOUT_MS via broker transport', (t) => {
+    if (!CAN_USE_UNIX_SOCKETS) return t.skip('Unix sockets are unavailable in this sandbox');
+    const evidence = path.join(os.tmpdir(), `probe-timeout-ev-${Date.now()}.txt`);
+    fs.writeFileSync(evidence, 'task_to_judge: test\n');
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'buddy-probe-timeout-'));
+    const hangBin = path.resolve(__dirname, 'fixtures', 'codex-app-server-stub-hang.mjs');
+    fs.chmodSync(hangBin, 0o755);
+    try {
+      const r = spawnSync(
+        'node',
+        [RUNTIME, '--action', 'probe', '--evidence', evidence, '--project-dir', '/tmp'],
+        {
+          encoding: 'utf8',
+          timeout: 3000,
+          env: {
+            ...process.env,
+            BUDDY_STUB_CODEX: '1',
+            BUDDY_BROKER_CODEX_BIN: hangBin,
+            BUDDY_HOME: tmpHome,
+            BUDDY_PROBE_TIMEOUT_MS: '400',
+          },
+        },
+      );
+      // Without BUDDY_PROBE_TIMEOUT_MS threading, broker watchdog is 10min and
+      // spawnSync kills the probe at 3s (signal='SIGTERM'). With threading, the
+      // probe exits on its own within ~500ms (signal=null).
+      assert.equal(r.signal, null,
+        `Probe must exit on its own within BUDDY_PROBE_TIMEOUT_MS, not be killed by runner (stderr=${r.stderr?.slice(0, 300)})`);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.status, 'error');
+      assert.match(out.message || '', /timeout/i);
+    } finally {
+      fs.rmSync(evidence, { force: true });
+      try {
+        spawnSync('node',
+          [path.resolve(__dirname, '..', 'buddy-broker-cli.mjs'), 'stop', '--project-dir', '/tmp', '--force'],
+          { encoding: 'utf8', timeout: 5000, env: { ...process.env, BUDDY_HOME: tmpHome } });
+      } catch {}
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
 });

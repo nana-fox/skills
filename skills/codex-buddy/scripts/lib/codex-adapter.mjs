@@ -120,9 +120,12 @@ export function execCodex({ bin, args }, options = {}) {
     const spawnedAt = Date.now();
     let firstByteAt = null;
 
+    const sigkillDelayMs = options.sigkillDelayMs ?? 5000;
+    let sigkillTimer = null;
     const watchdog = setTimeout(() => {
       killed = true;
       child.kill('SIGTERM');
+      sigkillTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, sigkillDelayMs);
       reject(new Error(`codex watchdog timeout after ${watchdogMs / 1000}s`));
     }, watchdogMs);
 
@@ -143,6 +146,7 @@ export function execCodex({ bin, args }, options = {}) {
 
     child.on('close', (code) => {
       clearTimeout(watchdog);
+      clearTimeout(sigkillTimer);
       if (killed) return; // already rejected by watchdog
       if (code === 0) {
         resolve(stdout);
@@ -168,6 +172,7 @@ export function execCodex({ bin, args }, options = {}) {
 
     child.on('error', (err) => {
       clearTimeout(watchdog);
+      clearTimeout(sigkillTimer);
       if (killed) return;
       reject(new Error(`Failed to spawn codex: ${err.message}`));
     });

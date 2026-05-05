@@ -145,6 +145,15 @@ const STUB_BIN = path.resolve(
   'codex-app-server-stub.mjs',
 );
 
+const HANG_BIN = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  '..',
+  '..',
+  '__tests__',
+  'fixtures',
+  'codex-app-server-stub-hang.mjs',
+);
+
 async function spawnBrokerWithStub(projectRoot) {
   // The stub script is invoked directly via shebang; ensure executable bit.
   fs.chmodSync(STUB_BIN, 0o755);
@@ -226,6 +235,54 @@ describe('buddy-broker — W8 turn/start streaming forwarding', () => {
     } finally {
       delete process.env.BUDDY_STUB_REPLY;
       delete process.env.BUDDY_BROKER_CODEX_BIN;
+      await sendShutdown(paths);
+    }
+  });
+
+  test('runBrokerTurn rejects early when no events arrive within noContentTimeoutMs', async (t) => {
+    if (!CAN_USE_UNIX_SOCKETS) return t.skip('Unix sockets are unavailable in this sandbox');
+    const projectRoot = '/tmp/buddy-broker-nocontent-' + Date.now();
+    fs.mkdirSync(projectRoot, { recursive: true });
+    const paths = getBrokerPaths(TEST_HOME, projectRoot);
+    fs.chmodSync(HANG_BIN, 0o755);
+    process.env.BUDDY_BROKER_CODEX_BIN = HANG_BIN;
+    await spawnBroker({ projectRoot, home: TEST_HOME });
+    try {
+      const start = Date.now();
+      await assert.rejects(
+        () => runBrokerTurn(paths, { prompt: 'test', projectDir: projectRoot, noContentTimeoutMs: 300 }),
+        /no.*(content|event|activit)|stall/i,
+      );
+      const elapsed = Date.now() - start;
+      assert.ok(elapsed < 1500, `Expected no-content timeout within 1.5s, took ${elapsed}ms`);
+    } finally {
+      delete process.env.BUDDY_BROKER_CODEX_BIN;
+      await sendShutdown(paths);
+    }
+  });
+
+  test('runBrokerTurn sends turn/interrupt before closing socket on total timeout', async (t) => {
+    if (!CAN_USE_UNIX_SOCKETS) return t.skip('Unix sockets are unavailable in this sandbox');
+    const projectRoot = '/tmp/buddy-broker-interrupt-' + Date.now();
+    fs.mkdirSync(projectRoot, { recursive: true });
+    const paths = getBrokerPaths(TEST_HOME, projectRoot);
+    const logFile = path.join(os.tmpdir(), `buddy-broker-interrupt-log-${Date.now()}.txt`);
+    fs.chmodSync(HANG_BIN, 0o755);
+    process.env.BUDDY_BROKER_CODEX_BIN = HANG_BIN;
+    process.env.BUDDY_STUB_LOG_FILE = logFile;
+    await spawnBroker({ projectRoot, home: TEST_HOME });
+    try {
+      await assert.rejects(
+        () => runBrokerTurn(paths, { prompt: 'test', projectDir: projectRoot, timeoutMs: 300 }),
+        /timeout/i,
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      const logged = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
+      assert.ok(logged.includes('turn/interrupt'), `Expected turn/interrupt in stub log, got: ${logged}`);
+    } finally {
+      delete process.env.BUDDY_BROKER_CODEX_BIN;
+      delete process.env.BUDDY_STUB_LOG_FILE;
+      fs.rmSync(logFile, { force: true });
       await sendShutdown(paths);
     }
   });
